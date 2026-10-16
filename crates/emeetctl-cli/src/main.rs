@@ -50,6 +50,8 @@ enum Cmd {
     /// Controles de imagem (UVC)
     #[command(subcommand)]
     Image(ImageCmd),
+    /// Câmera virtual "emeetctl Camera": republica a S600L para vários apps ao mesmo tempo (Ctrl+C para parar)
+    Virtualcam,
 }
 
 #[derive(Subcommand)]
@@ -216,6 +218,30 @@ fn run(cli: Cli) -> R {
             v.set(c.id, value)?;
             println!("{} = {}", c.key, v.get(c.id)?);
         }
+        Cmd::Virtualcam => {
+            let paths = emeetctl_core::find()?;
+            let src = paths.video.ok_or("nó de vídeo da câmera não encontrado")?;
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let s = stop.clone();
+            ctrlc_handler(move || s.store(true, std::sync::atomic::Ordering::Relaxed));
+            let sink = emeetctl_core::virtualcam::ensure_device()?;
+            eprintln!(
+                "câmera virtual \"{}\" em {} ← {} (MJPEG {}x{} → YUYV)",
+                emeetctl_core::virtualcam::LABEL,
+                sink.display(),
+                src.display(),
+                emeetctl_core::virtualcam::WIDTH,
+                emeetctl_core::virtualcam::HEIGHT
+            );
+            let mut last = std::time::Instant::now() - std::time::Duration::from_secs(60);
+            emeetctl_core::virtualcam::run(&src, &stop, |fps| {
+                // um log por minuto: o serviço roda o dia todo
+                if last.elapsed() >= std::time::Duration::from_secs(60) {
+                    eprintln!("{fps:.0} fps");
+                    last = std::time::Instant::now();
+                }
+            })?;
+        }
         Cmd::Image(ImageCmd::Reset) => {
             println!("{} controles no padrão", video()?.reset_defaults()?)
         }
@@ -233,6 +259,22 @@ fn parse_value(kind: &ControlKind, s: &str) -> Result<i32, Box<dyn std::error::E
             .map(|(i, _)| *i)
             .ok_or_else(|| format!("opção '{s}' não existe").into()),
         _ => Ok(s.parse()?),
+    }
+}
+
+/// SIGINT/SIGTERM viram uma parada limpa (o stream é fechado e a câmera liberada).
+fn ctrlc_handler(f: impl Fn() + Send + Sync + 'static) {
+    use std::sync::OnceLock;
+    static HANDLER: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+    let _ = HANDLER.set(Box::new(f));
+    extern "C" fn on_signal(_: libc::c_int) {
+        if let Some(h) = HANDLER.get() {
+            h();
+        }
+    }
+    unsafe {
+        libc::signal(libc::SIGINT, on_signal as libc::sighandler_t);
+        libc::signal(libc::SIGTERM, on_signal as libc::sighandler_t);
     }
 }
 
