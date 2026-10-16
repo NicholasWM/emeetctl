@@ -1,8 +1,13 @@
-//! Câmera virtual "emeetctl Camera": lê a S600L uma vez e republica num
-//! dispositivo v4l2loopback, que vários programas (Meet, Zoom, OBS, a prévia do
-//! emeetctl) conseguem abrir ao mesmo tempo. A câmera física só aceita um
-//! leitor de stream por vez; a virtual aceita vários.
+//! Câmera virtual "emeetctl Camera": lê a S600L uma vez e republica o mesmo
+//! quadro em N dispositivos v4l2loopback ("emeetctl Camera", "emeetctl Camera 2",
+//! ...), para vários programas (Meet, Zoom, OBS, a prévia do emeetctl) usarem a
+//! câmera ao mesmo tempo, cada um na sua saída.
 //!
+//! - Por que N saídas e não uma: a câmera física só aceita um leitor de stream,
+//!   e desde o 0.13 o v4l2loopback também só aceita um leitor de captura por
+//!   dispositivo ("only exclusive ownership for each stream" em `vidioc_reqbufs`;
+//!   o segundo leitor recebe EBUSY). Copiar o quadro para mais um dispositivo
+//!   custa ~1,8 MB de memcpy por quadro.
 //! - O dispositivo nasce pelo nó de controle `/dev/v4l2loopback` (ioctl
 //!   `V4L2LOOPBACK_CTL_ADD`, ABI do v4l2loopback 0.15), com `announce_all_caps = 0`
 //!   ("exclusive caps"): sem isso o Chrome não lista a câmera.
@@ -22,8 +27,12 @@ use v4l::io::traits::CaptureStream;
 use v4l::video::{Capture, Output};
 use v4l::{Device, FourCC};
 
-/// Nome que aparece na lista de câmeras dos apps.
+/// Nome que aparece na lista de câmeras dos apps (da primeira saída).
 pub const LABEL: &str = "emeetctl Camera";
+/// Saídas criadas por padrão: uma para a chamada, uma para gravar/transmitir e
+/// uma para a prévia do próprio emeetctl.
+pub const DEFAULT_OUTPUTS: usize = 3;
+pub const MAX_OUTPUTS: usize = 8;
 pub const WIDTH: u32 = 1280;
 pub const HEIGHT: u32 = 720;
 pub const FPS: u32 = 30;
@@ -48,24 +57,74 @@ struct LoopbackConfig {
     announce_all_caps: i32,
 }
 
-/// O nó da câmera virtual, se já existir.
-pub fn find_device() -> Option<PathBuf> {
-    let mut entries: Vec<_> = fs::read_dir("/sys/class/video4linux")
-        .ok()?
-        .flatten()
-        .collect();
-    entries.sort_by_key(|e| e.file_name());
-    entries.into_iter().find_map(|e| {
-        let name = fs::read_to_string(e.path().join("name")).ok()?;
-        (name.trim() == LABEL).then(|| Path::new("/dev").join(e.file_name()))
-    })
+/// Nome da saída `i` (0 = "emeetctl Camera", 1 = "emeetctl Camera 2", ...).
+pub fn label(i: usize) -> String {
+    if i == 0 {
+        LABEL.to_string()
+    } else {
+        format!("{LABEL} {}", i + 1)
+    }
 }
 
-/// Cria a câmera virtual (ou devolve a existente).
-pub fn ensure_device() -> Result<PathBuf> {
-    if let Some(p) = find_device() {
-        return Ok(p);
+/// Índice da saída a partir do nome do dispositivo, se for uma do emeetctl.
+fn output_index(name: &str) -> Option<usize> {
+    let rest = name.strip_prefix(LABEL)?;
+    if rest.is_empty() {
+        return Some(0);
     }
+    let n: usize = rest.strip_prefix(' ')?.parse().ok()?;
+    (n >= 2).then(|| n - 1)
+}
+
+/// Saídas da câmera virtual que já existem, em ordem (primeira = "emeetctl Camera").
+pub fn find_devices() -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir("/sys/class/video4linux") else {
+        return Vec::new();
+    };
+    let mut found: Vec<(usize, PathBuf)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let name = fs::read_to_string(e.path().join("name")).ok()?;
+            Some((
+                output_index(name.trim())?,
+                Path::new("/dev").join(e.file_name()),
+            ))
+        })
+        .collect();
+    found.sort();
+    found.into_iter().map(|(_, p)| p).collect()
+}
+
+/// O nó da primeira saída, se já existir.
+pub fn find_device() -> Option<PathBuf> {
+    find_devices().into_iter().next()
+}
+
+fn find_output(i: usize) -> Option<PathBuf> {
+    let want = label(i);
+    fs::read_dir("/sys/class/video4linux")
+        .ok()?
+        .flatten()
+        .find_map(|e| {
+            let name = fs::read_to_string(e.path().join("name")).ok()?;
+            (name.trim() == want).then(|| Path::new("/dev").join(e.file_name()))
+        })
+}
+
+/// Cria as `n` saídas que faltarem e devolve todas, em ordem.
+pub fn ensure_devices(n: usize) -> Result<Vec<PathBuf>> {
+    if n == 0 || n > MAX_OUTPUTS {
+        return Err(Error::Invalid(format!("saídas: 1 a {MAX_OUTPUTS}")));
+    }
+    (0..n)
+        .map(|i| match find_output(i) {
+            Some(p) => Ok(p),
+            None => create_device(&label(i)),
+        })
+        .collect()
+}
+
+fn create_device(name: &str) -> Result<PathBuf> {
     let ctl = OpenOptions::new().read(true).write(true).open(CONTROL).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => Error::Invalid(
             "módulo v4l2loopback não carregado: sudo modprobe v4l2loopback (pacote v4l2loopback-dkms)".into(),
@@ -74,7 +133,7 @@ pub fn ensure_device() -> Result<PathBuf> {
         _ => Error::Io(e),
     })?;
     let mut label = [0u8; 32];
-    label[..LABEL.len()].copy_from_slice(LABEL.as_bytes());
+    label[..name.len()].copy_from_slice(name.as_bytes());
     let mut cfg = LoopbackConfig {
         output_nr: -1,
         unused: -1,
@@ -109,11 +168,14 @@ pub fn ensure_device() -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Copia a câmera física para a virtual até `stop` virar `true`.
+/// Copia a câmera física para as saídas `sinks` até `stop` virar `true`.
 /// `on_fps` recebe a taxa medida a cada ~1 s (para log ou interface).
-pub fn run(source: &Path, stop: &AtomicBool, mut on_fps: impl FnMut(f32)) -> Result<()> {
-    let sink_path = ensure_device()?;
-
+pub fn run(
+    source: &Path,
+    sinks: &[PathBuf],
+    stop: &AtomicBool,
+    mut on_fps: impl FnMut(f32),
+) -> Result<()> {
     let src = Device::with_path(source)?;
     let mut fmt = Capture::format(&src)?;
     fmt.width = WIDTH;
@@ -127,18 +189,10 @@ pub fn run(source: &Path, stop: &AtomicBool, mut on_fps: impl FnMut(f32)) -> Res
     }
     let _ = Capture::set_params(&src, &v4l::video::capture::Parameters::with_fps(FPS));
 
-    let sink = Device::with_path(&sink_path)?;
-    let mut out = Output::format(&sink)?;
-    out.width = WIDTH;
-    out.height = HEIGHT;
-    out.fourcc = FourCC::new(b"YUYV");
-    out.stride = WIDTH * 2;
-    out.size = WIDTH * HEIGHT * 2;
-    out.field_order = v4l::format::FieldOrder::Progressive;
-    out.colorspace = v4l::format::Colorspace::SRGB;
-    Output::set_format(&sink, &out)?;
-    let sink_fd = sink.handle().fd();
-
+    let sinks = sinks
+        .iter()
+        .map(|p| open_sink(p))
+        .collect::<Result<Vec<_>>>()?;
     let mut stream = Stream::with_buffers(&src, Type::VideoCapture, 4)?;
     let mut yuyv = vec![0u8; (WIDTH * HEIGHT * 2) as usize];
     let (mut frames, mut since) = (0u32, Instant::now());
@@ -148,9 +202,11 @@ pub fn run(source: &Path, stop: &AtomicBool, mut on_fps: impl FnMut(f32)) -> Res
         if !mjpeg_to_yuyv(jpeg, WIDTH as usize, HEIGHT as usize, &mut yuyv) {
             continue; // quadro corrompido: pula, não derruba a câmera dos outros
         }
-        let n = unsafe { libc::write(sink_fd, yuyv.as_ptr().cast(), yuyv.len()) };
-        if n < 0 {
-            return Err(Error::Io(std::io::Error::last_os_error()));
+        for sink in &sinks {
+            let n = unsafe { libc::write(sink.handle().fd(), yuyv.as_ptr().cast(), yuyv.len()) };
+            if n < 0 {
+                return Err(Error::Io(std::io::Error::last_os_error()));
+            }
         }
         frames += 1;
         if since.elapsed() >= Duration::from_secs(1) {
@@ -159,6 +215,21 @@ pub fn run(source: &Path, stop: &AtomicBool, mut on_fps: impl FnMut(f32)) -> Res
         }
     }
     Ok(())
+}
+
+/// Abre uma saída e fixa o formato YUYV 1280×720.
+fn open_sink(path: &Path) -> Result<Device> {
+    let sink = Device::with_path(path)?;
+    let mut out = Output::format(&sink)?;
+    out.width = WIDTH;
+    out.height = HEIGHT;
+    out.fourcc = FourCC::new(b"YUYV");
+    out.stride = WIDTH * 2;
+    out.size = WIDTH * HEIGHT * 2;
+    out.field_order = v4l::format::FieldOrder::Progressive;
+    out.colorspace = v4l::format::Colorspace::SRGB;
+    Output::set_format(&sink, &out)?;
+    Ok(sink)
 }
 
 /// Decodifica o JPEG em YCbCr (faixa cheia) e empacota em YUYV de faixa limitada.
@@ -205,6 +276,18 @@ mod tests {
         // _IOW('~', 1, 72 bytes)
         let expected = (1u64 << 30) | (72 << 16) | (('~' as u64) << 8) | 1;
         assert_eq!(CTL_ADD as u64, expected);
+    }
+
+    #[test]
+    fn output_labels_round_trip() {
+        assert_eq!(label(0), "emeetctl Camera");
+        assert_eq!(label(2), "emeetctl Camera 3");
+        for i in 0..MAX_OUTPUTS {
+            assert_eq!(output_index(&label(i)), Some(i));
+        }
+        assert_eq!(output_index("emeetctl Camera 1"), None);
+        assert_eq!(output_index("emeetctl Cameras"), None);
+        assert_eq!(output_index("Iriun Webcam"), None);
     }
 
     #[test]
