@@ -114,6 +114,8 @@ struct App {
     /// liberada, para o Meet/Zoom conseguirem abrir (no Linux só um programa
     /// lê o stream da webcam por vez).
     focused: bool,
+    /// Nó de onde a prévia está lendo agora (a câmera física ou a virtual).
+    preview_src: Option<String>,
     last_error: Option<(String, Instant)>,
 }
 
@@ -143,6 +145,7 @@ impl App {
             preview_format: None,
             preview_error: None,
             focused: true,
+            preview_src: None,
             last_error: None,
         }
     }
@@ -219,12 +222,26 @@ impl App {
             self.preview_error = None;
         }
         self.focused = focused;
-        let wanted = self.preview_on && focused;
-        let video = self
+        // Com a câmera virtual ligada a prévia lê dela, que aceita vários leitores:
+        // não precisa soltar nada ao perder o foco.
+        let virtual_dev = self
             .snap
             .as_ref()
-            .and_then(|s| s.info.as_ref())
-            .and_then(|i| i.video.clone());
+            .filter(|s| s.virtualcam.active)
+            .and_then(|s| s.virtualcam.device.clone());
+        let wanted = self.preview_on && (focused || virtual_dev.is_some());
+        let video = virtual_dev.or_else(|| {
+            self.snap
+                .as_ref()
+                .and_then(|s| s.info.as_ref())
+                .and_then(|i| i.video.clone())
+        });
+        if self.preview.is_some() && video != self.preview_src {
+            // Trocou a fonte (ligou/desligou a câmera virtual): reabre.
+            self.preview = None;
+            self.texture = None;
+        }
+        self.preview_src = video.clone();
         match (wanted, video, self.preview.is_some()) {
             (true, Some(path), false) if self.preview_error.is_none() => {
                 self.preview = Some(preview::Preview::start(path.into(), ctx.clone()))
@@ -619,6 +636,41 @@ impl App {
                         ui.end_row();
                     }
                 });
+        });
+        let vc = self
+            .snap
+            .as_ref()
+            .map(|s| s.virtualcam.clone())
+            .unwrap_or_default();
+        card(ui, "Câmera virtual", |ui| {
+            ui.label(
+                RichText::new(
+                    "A \"emeetctl Camera\" lê a S600L uma vez e entrega a imagem para vários apps ao mesmo tempo \
+                     (Meet, Zoom, OBS e esta prévia). Nos apps, escolha \"emeetctl Camera\" como câmera.",
+                )
+                .color(MUTED),
+            );
+            if !vc.installed {
+                ui.label(
+                    RichText::new("Serviço emeetctl-virtualcam não instalado para este usuário.")
+                        .color(WARN),
+                );
+                return;
+            }
+            let mut active = vc.active;
+            let hint = match (&vc.device, vc.active) {
+                (Some(d), true) => format!("transmitindo em {d}"),
+                (_, true) => "iniciando…".to_string(),
+                _ => "desligada".to_string(),
+            };
+            if switch_row(ui, "Ligada", Some(&hint), &mut active) {
+                self.send(Cmd::VirtualCam(active));
+            }
+            ui.separator();
+            let mut enabled = vc.enabled;
+            if switch_row(ui, "Iniciar com a sessão", None, &mut enabled) {
+                self.send(Cmd::VirtualCamAutostart(enabled));
+            }
         });
         card(ui, "Firmware", |ui| {
             ui.label(

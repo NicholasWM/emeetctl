@@ -18,6 +18,47 @@ pub enum Cmd {
     Brightness(u8),
     Ctrl(u32, i32),
     ResetCtrls,
+    /// Liga/desliga o serviço da câmera virtual (`systemctl --user start|stop`).
+    VirtualCam(bool),
+    /// Inicia a câmera virtual junto com a sessão (`systemctl --user enable|disable`).
+    VirtualCamAutostart(bool),
+}
+
+/// Estado da câmera virtual visto pela interface.
+#[derive(Clone, Default)]
+pub struct VirtualCam {
+    /// O serviço `emeetctl-virtualcam` está instalado para o usuário.
+    pub installed: bool,
+    pub active: bool,
+    pub enabled: bool,
+    /// Nó `/dev/videoN` da "emeetctl Camera", se já foi criado.
+    pub device: Option<String>,
+}
+
+const UNIT: &str = "emeetctl-virtualcam.service";
+
+fn systemctl(args: &[&str]) -> Result<String, String> {
+    let out = std::process::Command::new("systemctl")
+        .arg("--user")
+        .args(args)
+        .output()
+        .map_err(|e| format!("systemctl: {e}"))?;
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if out.status.success() || args[0].starts_with("is-") {
+        Ok(text)
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
+}
+
+fn virtualcam_state() -> VirtualCam {
+    let enabled = systemctl(&["is-enabled", UNIT]).unwrap_or_default();
+    VirtualCam {
+        installed: !enabled.is_empty() && enabled != "not-found",
+        active: systemctl(&["is-active", UNIT]).is_ok_and(|s| s == "active"),
+        enabled: enabled == "enabled",
+        device: emeetctl_core::virtualcam::find_device().map(|p| p.display().to_string()),
+    }
 }
 
 pub struct Snapshot {
@@ -25,6 +66,7 @@ pub struct Snapshot {
     pub light: Result<LightStatus, String>,
     pub controls: Result<Vec<Control>, String>,
     pub error: Option<String>,
+    pub virtualcam: VirtualCam,
 }
 
 pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
@@ -107,6 +149,12 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
                         .set(id, v)
                         .map_err(|e| e.to_string())
                 }),
+                Cmd::VirtualCam(on) => {
+                    systemctl(&[if on { "start" } else { "stop" }, UNIT]).map(|_| ())
+                }
+                Cmd::VirtualCamAutostart(on) => {
+                    systemctl(&[if on { "enable" } else { "disable" }, UNIT]).map(|_| ())
+                }
                 Cmd::ResetCtrls => open_video(&mut video).and_then(|_| {
                     video
                         .as_ref()
@@ -145,6 +193,7 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
                 light: light_state,
                 controls,
                 error,
+                virtualcam: virtualcam_state(),
             })
             .is_err()
         {
