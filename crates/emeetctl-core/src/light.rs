@@ -42,7 +42,13 @@ pub enum Mode {
 }
 
 impl Mode {
-    pub const ALL: [Mode; 5] = [Mode::Cool, Mode::Warm, Mode::Balanced, Mode::Ambient, Mode::Rainbow];
+    pub const ALL: [Mode; 5] = [
+        Mode::Cool,
+        Mode::Warm,
+        Mode::Balanced,
+        Mode::Ambient,
+        Mode::Rainbow,
+    ];
 
     pub fn from_byte(b: u8) -> Option<Mode> {
         Mode::ALL.into_iter().find(|m| *m as u8 == b)
@@ -59,7 +65,9 @@ impl Mode {
     }
 
     pub fn parse(s: &str) -> Option<Mode> {
-        Mode::ALL.into_iter().find(|m| m.name().eq_ignore_ascii_case(s))
+        Mode::ALL
+            .into_iter()
+            .find(|m| m.name().eq_ignore_ascii_case(s))
     }
 
     /// Byte de modo usado pelos comandos de brilho: o arco-íris compartilha o do Ambient.
@@ -115,11 +123,17 @@ pub struct Light {
 
 impl Light {
     pub fn open(path: &Path) -> Result<Light> {
-        Ok(Light { file: open_rw(path, true)? })
+        Ok(Light {
+            file: open_rw(path, true)?,
+        })
     }
 
     fn wait_readable(&self, timeout: Duration) -> bool {
-        let mut pfd = libc::pollfd { fd: self.file.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd: self.file.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
         let ms = timeout.as_millis().min(i32::MAX as u128) as i32;
         unsafe { libc::poll(&mut pfd, 1, ms) > 0 }
     }
@@ -155,7 +169,9 @@ impl Light {
 
     fn write_frame(&mut self, op: u8, data: &[u8]) -> Result<()> {
         if !ALLOWED.contains(&op) {
-            return Err(Error::Invalid(format!("opcode 0x{op:02x} fora da lista observada")));
+            return Err(Error::Invalid(format!(
+                "opcode 0x{op:02x} fora da lista observada"
+            )));
         }
         let len = (data.len() as u16).to_be_bytes();
         let mut frame = [0u8; FRAME];
@@ -180,7 +196,9 @@ impl Light {
         if r.first() == Some(&ACK) {
             Ok(())
         } else {
-            Err(Error::Protocol(format!("op 0x{op:02x} respondeu {r:02x?} em vez de ACK")))
+            Err(Error::Protocol(format!(
+                "op 0x{op:02x} respondeu {r:02x?} em vez de ACK"
+            )))
         }
     }
 
@@ -220,7 +238,9 @@ impl Light {
 
     pub fn brightness_raw(&mut self, mode: Mode) -> Result<u8> {
         let r = self.request(0x05, &[mode.brightness_key()])?;
-        r.get(1).copied().ok_or_else(|| Error::Protocol(format!("brilho {r:02x?}")))
+        r.get(1)
+            .copied()
+            .ok_or_else(|| Error::Protocol(format!("brilho {r:02x?}")))
     }
 
     pub fn status(&mut self) -> Result<LightStatus> {
@@ -228,8 +248,17 @@ impl Light {
         let mode = self.mode().ok();
         let color = self.color().ok().map(hex);
         let brightness_raw = mode.and_then(|m| self.brightness_raw(m).ok());
-        let brightness_percent = mode.zip(brightness_raw).map(|(m, raw)| raw_to_percent(m, raw));
-        Ok(LightStatus { fill_light, ambient, mode, color, brightness_raw, brightness_percent })
+        let brightness_percent = mode
+            .zip(brightness_raw)
+            .map(|(m, raw)| raw_to_percent(m, raw));
+        Ok(LightStatus {
+            fill_light,
+            ambient,
+            mode,
+            color,
+            brightness_raw,
+            brightness_percent,
+        })
     }
 
     // ---- escritas ----
@@ -286,7 +315,9 @@ pub fn hex(rgb: [u8; 3]) -> String {
 
 pub fn parse_hex(s: &str) -> Result<[u8; 3]> {
     let s = s.trim().trim_start_matches('#');
-    let v = (s.len() == 6).then(|| u32::from_str_radix(s, 16).ok()).flatten();
+    let v = (s.len() == 6)
+        .then(|| u32::from_str_radix(s, 16).ok())
+        .flatten();
     match v {
         Some(v) => Ok([(v >> 16) as u8, (v >> 8) as u8, v as u8]),
         None => Err(Error::Invalid(format!("cor inválida '{s}': use RRGGBB"))),

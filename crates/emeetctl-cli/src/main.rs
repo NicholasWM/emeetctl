@@ -3,7 +3,11 @@ use emeetctl_core::{light, ControlKind, Light, Mode, Target, Video};
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "emeetctl", version, about = "Luz e imagem da EMEET SmartCam S600L no Linux")]
+#[command(
+    name = "emeetctl",
+    version,
+    about = "Luz e imagem da EMEET SmartCam S600L no Linux"
+)]
 struct Cli {
     /// Saída em JSON
     #[arg(long, global = true)]
@@ -19,15 +23,24 @@ enum Cmd {
     /// Estado da luz
     Status,
     /// Liga a luz (rgb = anel Ambient, fill = luz de preenchimento)
-    On { #[arg(value_enum, default_value = "rgb")] alvo: Alvo },
+    On {
+        #[arg(value_enum, default_value = "rgb")]
+        alvo: Alvo,
+    },
     /// Desliga a luz
-    Off { #[arg(value_enum, default_value = "rgb")] alvo: Alvo },
+    Off {
+        #[arg(value_enum, default_value = "rgb")]
+        alvo: Alvo,
+    },
     /// Cor do anel RGB, em RRGGBB (qualquer cor)
     Color { rgb: String },
     /// Modo arco-íris
     Rainbow,
     /// Modo de luz
-    Mode { #[arg(value_enum)] modo: ModoArg },
+    Mode {
+        #[arg(value_enum)]
+        modo: ModoArg,
+    },
     /// Brilho em % da faixa do modo atual, ou cru com --raw
     Brightness {
         percent: Option<u8>,
@@ -52,10 +65,18 @@ enum ImageCmd {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-enum Alvo { Rgb, Fill }
+enum Alvo {
+    Rgb,
+    Fill,
+}
 
 #[derive(Clone, Copy, ValueEnum)]
-enum ModoArg { Cool, Warm, Balanced, Ambient }
+enum ModoArg {
+    Cool,
+    Warm,
+    Balanced,
+    Ambient,
+}
 
 fn parse_u8(s: &str) -> Result<u8, String> {
     let r = match s.strip_prefix("0x") {
@@ -66,7 +87,10 @@ fn parse_u8(s: &str) -> Result<u8, String> {
 }
 
 fn target(a: Alvo) -> Target {
-    match a { Alvo::Rgb => Target::Ambient, Alvo::Fill => Target::Fill }
+    match a {
+        Alvo::Rgb => Target::Ambient,
+        Alvo::Fill => Target::Fill,
+    }
 }
 
 type R = Result<(), Box<dyn std::error::Error>>;
@@ -91,14 +115,29 @@ fn run(cli: Cli) -> R {
     match cli.cmd {
         Cmd::Info => {
             let info = emeetctl_core::find()?.info();
-            if cli.json { println!("{}", serde_json::to_string_pretty(&info)?); return Ok(()); }
-            println!("produto:  {}\nserial:   {}\nfirmware: {}\nhidraw:   {}\nvideo:    {}",
-                info.product, info.serial, info.firmware, opt(info.hidraw), opt(info.video));
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&info)?);
+                return Ok(());
+            }
+            println!(
+                "produto:  {}\nserial:   {}\nfirmware: {}\nhidraw:   {}\nvideo:    {}",
+                info.product,
+                info.serial,
+                info.firmware,
+                opt(info.hidraw),
+                opt(info.video)
+            );
         }
         Cmd::Status => {
             let s = light()?.status()?;
-            if cli.json { println!("{}", serde_json::to_string_pretty(&s)?); return Ok(()); }
-            let onoff = |b: Option<bool>| b.map(|b| if b { "ligada" } else { "desligada" }).unwrap_or("?");
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&s)?);
+                return Ok(());
+            }
+            let onoff = |b: Option<bool>| {
+                b.map(|b| if b { "ligada" } else { "desligada" })
+                    .unwrap_or("?")
+            };
             println!("fill light: {}\nrgb:        {}\nmodo:       {}\ncor:        {}\nbrilho:     {}% (raw {})",
                 onoff(s.fill_light), onoff(s.ambient), opt(s.mode.map(|m| m.name())),
                 opt(s.color), opt(s.brightness_percent), opt(s.brightness_raw));
@@ -109,36 +148,65 @@ fn run(cli: Cli) -> R {
         Cmd::Rainbow => light()?.set_mode(Mode::Rainbow)?,
         Cmd::Mode { modo } => {
             let m = match modo {
-                ModoArg::Cool => Mode::Cool, ModoArg::Warm => Mode::Warm,
-                ModoArg::Balanced => Mode::Balanced, ModoArg::Ambient => Mode::Ambient,
+                ModoArg::Cool => Mode::Cool,
+                ModoArg::Warm => Mode::Warm,
+                ModoArg::Balanced => Mode::Balanced,
+                ModoArg::Ambient => Mode::Ambient,
             };
             light()?.set_mode(m)?
         }
         Cmd::Brightness { percent, raw } => {
             let mut l = light()?;
             let (mode, v) = match (percent, raw) {
-                (_, Some(raw)) => { let m = l.mode()?; (m, l.set_brightness_raw(m, raw)?) }
+                (_, Some(raw)) => {
+                    let m = l.mode()?;
+                    (m, l.set_brightness_raw(m, raw)?)
+                }
                 (Some(p), None) => l.set_brightness_percent(p)?,
                 (None, None) => return Err("informe a porcentagem ou --raw".into()),
             };
-            println!("{}: raw 0x{v:02x} ({}%)", mode.name(), light::raw_to_percent(mode, v));
+            println!(
+                "{}: raw 0x{v:02x} ({}%)",
+                mode.name(),
+                light::raw_to_percent(mode, v)
+            );
         }
         Cmd::Image(ImageCmd::List) => {
             let ctrls = video()?.controls()?;
-            if cli.json { println!("{}", serde_json::to_string_pretty(&ctrls)?); return Ok(()); }
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&ctrls)?);
+                return Ok(());
+            }
             for c in ctrls {
                 let faixa = match &c.kind {
                     ControlKind::Boolean => "on/off".to_string(),
-                    ControlKind::Menu { items } => items.iter().map(|(i, n)| format!("{i}={n}")).collect::<Vec<_>>().join(", "),
+                    ControlKind::Menu { items } => items
+                        .iter()
+                        .map(|(i, n)| format!("{i}={n}"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
                     ControlKind::Integer => format!("{}..{}", c.min, c.max),
                 };
-                println!("{:34} {:>6}  [{faixa}] padrão {}{}", c.key, c.value, c.default,
-                    if c.inactive { "  (inativo: modo automático ligado)" } else { "" });
+                println!(
+                    "{:34} {:>6}  [{faixa}] padrão {}{}",
+                    c.key,
+                    c.value,
+                    c.default,
+                    if c.inactive {
+                        "  (inativo: modo automático ligado)"
+                    } else {
+                        ""
+                    }
+                );
             }
         }
         Cmd::Image(ImageCmd::Get { controle }) => {
             let c = video()?.find(&controle)?;
-            if cli.json { println!("{}", serde_json::to_string_pretty(&c)?); } else { println!("{}", c.value); }
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&c)?);
+            } else {
+                println!("{}", c.value);
+            }
         }
         Cmd::Image(ImageCmd::Set { controle, valor }) => {
             let v = video()?;
@@ -147,7 +215,9 @@ fn run(cli: Cli) -> R {
             v.set(c.id, value)?;
             println!("{} = {}", c.key, v.get(c.id)?);
         }
-        Cmd::Image(ImageCmd::Reset) => println!("{} controles no padrão", video()?.reset_defaults()?),
+        Cmd::Image(ImageCmd::Reset) => {
+            println!("{} controles no padrão", video()?.reset_defaults()?)
+        }
     }
     Ok(())
 }
@@ -168,6 +238,9 @@ fn parse_value(kind: &ControlKind, s: &str) -> Result<i32, Box<dyn std::error::E
 fn main() -> ExitCode {
     match run(Cli::parse()) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(e) => { eprintln!("erro: {e}"); ExitCode::FAILURE }
+        Err(e) => {
+            eprintln!("erro: {e}");
+            ExitCode::FAILURE
+        }
     }
 }

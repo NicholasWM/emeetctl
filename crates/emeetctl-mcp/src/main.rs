@@ -93,11 +93,15 @@ fn video() -> Result<Video, String> {
 }
 
 fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str, String> {
-    a.get(k).and_then(Value::as_str).ok_or(format!("argumento '{k}' ausente"))
+    a.get(k)
+        .and_then(Value::as_str)
+        .ok_or(format!("argumento '{k}' ausente"))
 }
 
 fn int_arg(a: &Value, k: &str) -> Result<i64, String> {
-    a.get(k).and_then(Value::as_i64).ok_or(format!("argumento '{k}' ausente"))
+    a.get(k)
+        .and_then(Value::as_i64)
+        .ok_or(format!("argumento '{k}' ausente"))
 }
 
 fn call(name: &str, a: &Value) -> R {
@@ -117,7 +121,10 @@ fn call(name: &str, a: &Value) -> R {
                 "ambient" => Target::Ambient,
                 o => return Err(format!("target inválido: {o}")),
             };
-            let on = a.get("on").and_then(Value::as_bool).ok_or("argumento 'on' ausente")?;
+            let on = a
+                .get("on")
+                .and_then(Value::as_bool)
+                .ok_or("argumento 'on' ausente")?;
             light()?.set_power(t, on).map_err(e)?;
             Ok(json!({ "ok": true }))
         }
@@ -135,7 +142,9 @@ fn call(name: &str, a: &Value) -> R {
         "set_light_brightness" => {
             let p = int_arg(a, "percent")?.clamp(0, 100) as u8;
             let (mode, raw) = light()?.set_brightness_percent(p).map_err(e)?;
-            Ok(json!({ "ok": true, "mode": mode, "raw": raw, "percent": light::raw_to_percent(mode, raw) }))
+            Ok(
+                json!({ "ok": true, "mode": mode, "raw": raw, "percent": light::raw_to_percent(mode, raw) }),
+            )
         }
         "list_image_controls" => Ok(json!(video()?.controls().map_err(e)?)),
         "set_image_control" => {
@@ -150,7 +159,9 @@ fn call(name: &str, a: &Value) -> R {
             v.set(c.id, value).map_err(e)?;
             Ok(json!({ "ok": true, "control": c.key, "value": v.get(c.id).map_err(e)? }))
         }
-        "reset_image_controls" => Ok(json!({ "ok": true, "reset": video()?.reset_defaults().map_err(e)? })),
+        "reset_image_controls" => {
+            Ok(json!({ "ok": true, "reset": video()?.reset_defaults().map_err(e)? }))
+        }
         _ => Err(format!("ferramenta desconhecida: {name}")),
     }
 }
@@ -161,7 +172,10 @@ fn handle(msg: &Value) -> Option<Value> {
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
     let result = match method {
         "initialize" => {
-            let version = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(PROTOCOL_VERSION);
+            let version = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or(PROTOCOL_VERSION);
             json!({
                 "protocolVersion": version,
                 "capabilities": { "tools": {} },
@@ -175,7 +189,9 @@ fn handle(msg: &Value) -> Option<Value> {
             let name = params.get("name").and_then(Value::as_str).unwrap_or("");
             let args = params.get("arguments").cloned().unwrap_or(json!({}));
             match call(name, &args) {
-                Ok(v) => json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap() }] }),
+                Ok(v) => {
+                    json!({ "content": [{ "type": "text", "text": serde_json::to_string_pretty(&v).unwrap() }] })
+                }
                 Err(m) => json!({ "content": [{ "type": "text", "text": m }], "isError": true }),
             }
         }

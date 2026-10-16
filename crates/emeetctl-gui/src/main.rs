@@ -26,17 +26,45 @@ struct AutoPair {
 }
 
 const PAIRS: [AutoPair; 3] = [
-    AutoPair { auto_key: "auto_exposure", manual_key: "exposure_time_absolute", manual_label: "Tempo de exposição" },
-    AutoPair { auto_key: "white_balance_automatic", manual_key: "white_balance_temperature", manual_label: "Temperatura (K)" },
-    AutoPair { auto_key: "focus_automatic_continuous", manual_key: "focus_absolute", manual_label: "Foco manual" },
+    AutoPair {
+        auto_key: "auto_exposure",
+        manual_key: "exposure_time_absolute",
+        manual_label: "Tempo de exposição",
+    },
+    AutoPair {
+        auto_key: "white_balance_automatic",
+        manual_key: "white_balance_temperature",
+        manual_label: "Temperatura (K)",
+    },
+    AutoPair {
+        auto_key: "focus_automatic_continuous",
+        manual_key: "focus_absolute",
+        manual_label: "Foco manual",
+    },
 ];
 
 /// Cartões da aba Imagem: título e as chaves (as dos pares entram pelo `auto_key`).
 const GROUPS: [(&str, &[&str]); 5] = [
-    ("Exposição", &["auto_exposure", "gain", "backlight_compensation"]),
+    (
+        "Exposição",
+        &["auto_exposure", "gain", "backlight_compensation"],
+    ),
     ("Balanço de branco", &["white_balance_automatic"]),
-    ("Imagem", &["brightness", "contrast", "saturation", "hue", "gamma", "sharpness"]),
-    ("Foco e zoom", &["focus_automatic_continuous", "zoom_absolute"]),
+    (
+        "Imagem",
+        &[
+            "brightness",
+            "contrast",
+            "saturation",
+            "hue",
+            "gamma",
+            "sharpness",
+        ],
+    ),
+    (
+        "Foco e zoom",
+        &["focus_automatic_continuous", "zoom_absolute"],
+    ),
     ("Anti-flicker", &["power_line_frequency"]),
 ];
 
@@ -123,14 +151,20 @@ impl App {
             self.last_error = Some((e.clone(), Instant::now()));
         }
         if let Ok(l) = &s.light {
-            let editing = self.brightness_edited.is_some_and(|t| t.elapsed() < EDIT_GRACE);
+            let editing = self
+                .brightness_edited
+                .is_some_and(|t| t.elapsed() < EDIT_GRACE);
             if let (Some(p), false) = (l.brightness_percent, editing) {
                 self.brightness = p as i32;
             }
-            let typing = self.hex_edited.is_some_and(|t| t.elapsed() < Duration::from_secs(10));
-            if let (Some(c), Some(Mode::Ambient), false) =
-                (l.color.as_deref().and_then(|h| light::parse_hex(h).ok()), l.mode, typing)
-            {
+            let typing = self
+                .hex_edited
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(10));
+            if let (Some(c), Some(Mode::Ambient), false) = (
+                l.color.as_deref().and_then(|h| light::parse_hex(h).ok()),
+                l.mode,
+                typing,
+            ) {
                 self.color = c;
                 self.hex = light::hex(c);
             }
@@ -168,7 +202,11 @@ impl App {
     // ---------- prévia ----------
 
     fn sync_preview(&mut self, ctx: &egui::Context) {
-        let video = self.snap.as_ref().and_then(|s| s.info.as_ref()).and_then(|i| i.video.clone());
+        let video = self
+            .snap
+            .as_ref()
+            .and_then(|s| s.info.as_ref())
+            .and_then(|i| i.video.clone());
         match (self.preview_on, video, self.preview.is_some()) {
             (true, Some(path), false) if self.preview_error.is_none() => {
                 self.preview = Some(preview::Preview::start(path.into(), ctx.clone()))
@@ -184,7 +222,10 @@ impl App {
             if let Some(img) = s.frame.take() {
                 match &mut self.texture {
                     Some(t) => t.set(img, egui::TextureOptions::LINEAR),
-                    None => self.texture = Some(ctx.load_texture("preview", img, egui::TextureOptions::LINEAR)),
+                    None => {
+                        self.texture =
+                            Some(ctx.load_texture("preview", img, egui::TextureOptions::LINEAR))
+                    }
                 }
             }
             self.preview_format = s.format.clone().map(|f| match s.fps {
@@ -221,13 +262,32 @@ impl App {
                     (None, false) => ("Prévia pausada".to_string(), MUTED),
                     (None, true) => ("Abrindo a câmera…".to_string(), MUTED),
                 };
-                painter.text(rect.center(), egui::Align2::CENTER_CENTER, msg, egui::FontId::proportional(15.0), color);
+                painter.text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    msg,
+                    egui::FontId::proportional(15.0),
+                    color,
+                );
             }
         }
 
-        let label = if self.preview_on { "Pausar prévia" } else { "Mostrar prévia" };
-        let btn = egui::Rect::from_min_size(egui::pos2(rect.right() - 142.0, rect.top() + 10.0), egui::vec2(132.0, 30.0));
-        if ui.put(btn, egui::Button::new(label).fill(Color32::from_black_alpha(170))).clicked() {
+        let label = if self.preview_on {
+            "Pausar prévia"
+        } else {
+            "Mostrar prévia"
+        };
+        let btn = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 142.0, rect.top() + 10.0),
+            egui::vec2(132.0, 30.0),
+        );
+        if ui
+            .put(
+                btn,
+                egui::Button::new(label).fill(Color32::from_black_alpha(170)),
+            )
+            .clicked()
+        {
             self.preview_on = !self.preview_on;
             self.preview_error = None;
         }
@@ -246,7 +306,12 @@ impl App {
 
         card(ui, "Energia", |ui| {
             let mut fill = st.fill_light.unwrap_or(false);
-            if switch_row(ui, "Luz de preenchimento", Some("Fill Light: toda a luz do anel"), &mut fill) {
+            if switch_row(
+                ui,
+                "Luz de preenchimento",
+                Some("Fill Light: toda a luz do anel"),
+                &mut fill,
+            ) {
                 self.send(Cmd::Power(Target::Fill, fill));
             }
             ui.separator();
@@ -261,18 +326,31 @@ impl App {
         card(ui, "Modo", |ui| {
             let (modes, labels): (&[Mode], &[&str]) = if ring_on {
                 (
-                    &[Mode::Cool, Mode::Warm, Mode::Balanced, Mode::Ambient, Mode::Rainbow],
+                    &[
+                        Mode::Cool,
+                        Mode::Warm,
+                        Mode::Balanced,
+                        Mode::Ambient,
+                        Mode::Rainbow,
+                    ],
                     &["Frio", "Quente", "Neutro", "Cor", "Arco-íris"],
                 )
             } else {
-                (&[Mode::Cool, Mode::Warm, Mode::Balanced], &["Frio", "Quente", "Neutro"])
+                (
+                    &[Mode::Cool, Mode::Warm, Mode::Balanced],
+                    &["Frio", "Quente", "Neutro"],
+                )
             };
             let sel = st.mode.and_then(|m| modes.iter().position(|x| *x == m));
             if let Some(i) = segmented(ui, labels, sel) {
                 self.send(Cmd::Mode(modes[i]));
             }
             if !ring_on {
-                ui.label(RichText::new("Ligue o anel RGB para escolher cores e o arco-íris.").small().color(MUTED));
+                ui.label(
+                    RichText::new("Ligue o anel RGB para escolher cores e o arco-íris.")
+                        .small()
+                        .color(MUTED),
+                );
             }
         });
 
@@ -281,7 +359,15 @@ impl App {
         }
 
         card(ui, "Brilho", |ui| {
-            if slider_row(ui, "Intensidade", &mut self.brightness, 0..=100, 1, true, " %") {
+            if slider_row(
+                ui,
+                "Intensidade",
+                &mut self.brightness,
+                0..=100,
+                1,
+                true,
+                " %",
+            ) {
                 self.brightness_edited = Some(Instant::now());
                 self.send(Cmd::Brightness(self.brightness as u8));
             }
@@ -306,7 +392,12 @@ impl App {
                     self.send(Cmd::Color(self.color));
                 }
                 ui.label(RichText::new("#").color(MUTED));
-                let r = ui.add(egui::TextEdit::singleline(&mut self.hex).desired_width(84.0).char_limit(7).font(egui::TextStyle::Monospace));
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut self.hex)
+                        .desired_width(84.0)
+                        .char_limit(7)
+                        .font(egui::TextStyle::Monospace),
+                );
                 if r.changed() {
                     self.hex_edited = Some(Instant::now());
                 }
@@ -323,16 +414,22 @@ impl App {
                 }
             });
             if !fixed {
-                ui.label(RichText::new("Escolher uma cor muda o modo para Cor.").small().color(MUTED));
+                ui.label(
+                    RichText::new("Escolher uma cor muda o modo para Cor.")
+                        .small()
+                        .color(MUTED),
+                );
             }
         });
-
     }
 
     fn image_tab(&mut self, ui: &mut egui::Ui) {
         let ctrls = self.controls();
         if ctrls.is_empty() {
-            let err = self.snap.as_ref().and_then(|s| s.controls.as_ref().err().cloned());
+            let err = self
+                .snap
+                .as_ref()
+                .and_then(|s| s.controls.as_ref().err().cloned());
             return self.unavailable(ui, err);
         }
         let by_key: HashMap<&str, &Control> = ctrls.iter().map(|c| (c.key.as_str(), c)).collect();
@@ -353,7 +450,11 @@ impl App {
                         self.control_widget(ui, c);
                     }
                     if *key == "zoom_absolute" {
-                        ui.label(RichText::new("A câmera ignora o zoom em 1080p, 4K e no formato YUYV.").small().color(MUTED));
+                        ui.label(
+                            RichText::new("A câmera ignora o zoom em 1080p, 4K e no formato YUYV.")
+                                .small()
+                                .color(MUTED),
+                        );
                     }
                 }
             });
@@ -372,21 +473,43 @@ impl App {
         }
 
         ui.add_space(4.0);
-        if ui.add(egui::Button::new("Restaurar padrões de fábrica").min_size(egui::vec2(ui.available_width(), 34.0))).clicked() {
+        if ui
+            .add(
+                egui::Button::new("Restaurar padrões de fábrica")
+                    .min_size(egui::vec2(ui.available_width(), 34.0)),
+            )
+            .clicked()
+        {
             self.ctrl_edited.clear();
             self.send(Cmd::ResetCtrls);
         }
     }
 
     /// Switch "Automático" e, embaixo, o controle manual que ele destrava.
-    fn auto_pair(&mut self, ui: &mut egui::Ui, auto: &Control, pair: &AutoPair, manual: Option<&Control>) {
+    fn auto_pair(
+        &mut self,
+        ui: &mut egui::Ui,
+        auto: &Control,
+        pair: &AutoPair,
+        manual: Option<&Control>,
+    ) {
         let v = self.value(auto);
         let (mut on, on_value, off_value) = match &auto.kind {
             // auto_exposure é menu: "Manual Mode" desliga, o outro item liga.
             ControlKind::Menu { items } => {
-                let manual_item = items.iter().find(|(_, n)| n.to_lowercase().contains("manual")).map(|(i, _)| *i);
-                let auto_item = items.iter().find(|(i, _)| Some(*i) != manual_item).map(|(i, _)| *i);
-                (Some(v) != manual_item, auto_item.unwrap_or(auto.default), manual_item.unwrap_or(1))
+                let manual_item = items
+                    .iter()
+                    .find(|(_, n)| n.to_lowercase().contains("manual"))
+                    .map(|(i, _)| *i);
+                let auto_item = items
+                    .iter()
+                    .find(|(i, _)| Some(*i) != manual_item)
+                    .map(|(i, _)| *i);
+                (
+                    Some(v) != manual_item,
+                    auto_item.unwrap_or(auto.default),
+                    manual_item.unwrap_or(1),
+                )
             }
             _ => (v != 0, 1, 0),
         };
@@ -395,7 +518,15 @@ impl App {
         }
         if let Some(m) = manual {
             let mut mv = self.value(m);
-            if slider_row(ui, pair.manual_label, &mut mv, m.min..=m.max, m.step, !on, "") {
+            if slider_row(
+                ui,
+                pair.manual_label,
+                &mut mv,
+                m.min..=m.max,
+                m.step,
+                !on,
+                "",
+            ) {
                 self.set_ctrl(m, mv);
             }
         }
@@ -425,7 +556,9 @@ impl App {
                     None => false,
                 }
             }
-            ControlKind::Integer => slider_row(ui, label, &mut v, c.min..=c.max, c.step, enabled, ""),
+            ControlKind::Integer => {
+                slider_row(ui, label, &mut v, c.min..=c.max, c.step, enabled, "")
+            }
         };
         if changed {
             self.set_ctrl(c, v);
@@ -437,19 +570,22 @@ impl App {
             return self.unavailable(ui, Some("câmera não encontrada".into()));
         };
         card(ui, "Dispositivo", |ui| {
-            egui::Grid::new("info").num_columns(2).spacing([18.0, 10.0]).show(ui, |ui| {
-                for (k, v) in [
-                    ("Produto", info.product),
-                    ("Serial", info.serial),
-                    ("Firmware", info.firmware),
-                    ("Canal da luz", info.hidraw.unwrap_or("—".into())),
-                    ("Vídeo", info.video.unwrap_or("—".into())),
-                ] {
-                    ui.label(RichText::new(k).color(MUTED));
-                    ui.label(RichText::new(v).monospace());
-                    ui.end_row();
-                }
-            });
+            egui::Grid::new("info")
+                .num_columns(2)
+                .spacing([18.0, 10.0])
+                .show(ui, |ui| {
+                    for (k, v) in [
+                        ("Produto", info.product),
+                        ("Serial", info.serial),
+                        ("Firmware", info.firmware),
+                        ("Canal da luz", info.hidraw.unwrap_or("—".into())),
+                        ("Vídeo", info.video.unwrap_or("—".into())),
+                    ] {
+                        ui.label(RichText::new(k).color(MUTED));
+                        ui.label(RichText::new(v).monospace());
+                        ui.end_row();
+                    }
+                });
         });
         card(ui, "Firmware", |ui| {
             ui.label(
@@ -490,7 +626,11 @@ impl App {
 
     fn header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top")
-            .frame(egui::Frame::default().fill(theme::BG).inner_margin(egui::Margin::symmetric(18, 12)))
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::BG)
+                    .inner_margin(egui::Margin::symmetric(18, 12)),
+            )
             .show_separator_line(false)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -504,11 +644,16 @@ impl App {
                         Some(_) => (LIVE, "câmera desconectada".into()),
                         None => (MUTED, "procurando…".into()),
                     };
-                    let (r, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    let (r, _) =
+                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                     ui.painter().circle_filled(r.center(), 4.5, dot);
                     ui.label(RichText::new(text).color(MUTED));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("⟳  Atualizar").on_hover_text("Ler a câmera de novo").clicked() {
+                        if ui
+                            .button("⟳  Atualizar")
+                            .on_hover_text("Ler a câmera de novo")
+                            .clicked()
+                        {
                             self.send(Cmd::Refresh);
                         }
                     });
@@ -517,12 +662,18 @@ impl App {
     }
 
     fn footer(&mut self, ctx: &egui::Context) {
-        let Some((e, t)) = &self.last_error else { return };
+        let Some((e, t)) = &self.last_error else {
+            return;
+        };
         if t.elapsed() > Duration::from_secs(8) {
             return;
         }
         egui::TopBottomPanel::bottom("status")
-            .frame(egui::Frame::default().fill(theme::BG).inner_margin(egui::Margin::symmetric(18, 8)))
+            .frame(
+                egui::Frame::default()
+                    .fill(theme::BG)
+                    .inner_margin(egui::Margin::symmetric(18, 8)),
+            )
             .show(ctx, |ui| {
                 ui.label(RichText::new(format!("⚠  {e}")).color(WARN));
             });
@@ -533,7 +684,12 @@ impl App {
 /// `--tab luz|imagem|dispositivo` abre direto numa aba.
 fn initial_tab() -> Tab {
     let args: Vec<String> = std::env::args().collect();
-    match args.iter().position(|a| a == "--tab").and_then(|i| args.get(i + 1)).map(String::as_str) {
+    match args
+        .iter()
+        .position(|a| a == "--tab")
+        .and_then(|i| args.get(i + 1))
+        .map(String::as_str)
+    {
         Some("imagem") => Tab::Image,
         Some("dispositivo") => Tab::Device,
         _ => Tab::Light,
@@ -568,7 +724,9 @@ impl eframe::App for App {
                 .resizable(false)
                 .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(pad))
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| self.side(ui));
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| self.side(ui));
                 });
             egui::CentralPanel::default()
                 .frame(egui::Frame::default().fill(theme::BG).inner_margin(pad))
@@ -584,12 +742,14 @@ impl eframe::App for App {
             egui::CentralPanel::default()
                 .frame(egui::Frame::default().fill(theme::PANEL).inner_margin(pad))
                 .show(ctx, |ui| {
-                    egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                        let max = egui::vec2(ui.available_width(), 320.0);
-                        self.preview_view(ui, max);
-                        ui.add_space(6.0);
-                        self.side(ui);
-                    });
+                    egui::ScrollArea::vertical()
+                        .auto_shrink(false)
+                        .show(ui, |ui| {
+                            let max = egui::vec2(ui.available_width(), 320.0);
+                            self.preview_view(ui, max);
+                            ui.add_space(6.0);
+                            self.side(ui);
+                        });
                 });
         }
     }
@@ -603,10 +763,16 @@ fn main() -> eframe::Result {
             .with_inner_size([1180.0, 720.0])
             .with_min_inner_size([420.0, 560.0])
             .with_icon(
-                eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icons/hicolor/256x256/apps/emeetctl.png"))
-                    .expect("ícone embutido é um PNG válido"),
+                eframe::icon_data::from_png_bytes(include_bytes!(
+                    "../../../assets/icons/hicolor/256x256/apps/emeetctl.png"
+                ))
+                .expect("ícone embutido é um PNG válido"),
             ),
         ..Default::default()
     };
-    eframe::run_native("emeetctl", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+    eframe::run_native(
+        "emeetctl",
+        options,
+        Box::new(|cc| Ok(Box::new(App::new(cc)))),
+    )
 }
