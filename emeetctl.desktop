@@ -4,5 +4,6 @@ Name=emeetctl
 Comment=Luz e imagem da webcam EMEET SmartCam S600L
 Exec=emeetctl-gui
 Icon=camera-web
-Categories=AudioVideo;Video;Settings;
+Categories=AudioVideo;Video;
 Terminal=false
+StartupWMClass=emeetctl
