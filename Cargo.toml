@@ -19,3 +19,8 @@ eframe = "0.31"
 [profile.release]
 lto = "thin"
 strip = true
+
+# Dependências (decodificador JPEG, egui) otimizadas mesmo no build de dev:
+# sem isso a prévia cai de ~60 para ~6 fps.
+[profile.dev.package."*"]
+opt-level = 3
