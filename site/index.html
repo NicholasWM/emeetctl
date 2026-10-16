@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#121417" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7f8" media="(prefers-color-scheme: light)">
+<title>emeetctl — open source Linux control for the EMEET SmartCam S600L</title>
+<meta name="description" content="Ring light, image controls and live preview for the EMEET SmartCam S600L on Linux. GUI, CLI and MCP server. MIT OR Apache-2.0.">
+<meta property="og:title" content="emeetctl — Linux control for the EMEET SmartCam S600L">
+<meta property="og:description" content="Ring light, image controls and live preview on Linux, where the vendor app only exists for Windows and macOS. GUI, CLI and MCP server.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="img/screen-luz.png">
+<link id="favicon" rel="icon" href="img/logo.png">
+<style>
+:root{
+  --bg:#121417;--panel:#181b1f;--card:#202429;--border:#2b3036;
+  --fg:#e6e8eb;--mute:#8b939c;--accent:#3dd6b5;--accent-ink:#0b2a23;
+  --magenta:#e0409a;--orange:#ff8a3d;
+  --rgb:linear-gradient(90deg,#3dd6b5 0%,#e0409a 52%,#ff8a3d 100%);
+  --code-bg:#0d0f12;--shadow:0 18px 50px rgba(0,0,0,.45);
+  --radius:14px;
+  --mono:ui-monospace,SFMono-Regular,"JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;
+}
+@media (prefers-color-scheme: light){
+  :root{
+    --bg:#f6f7f8;--panel:#ffffff;--card:#eef0f2;--border:#d6dade;
+    --fg:#15181c;--mute:#55606b;--accent:#0f8a72;--accent-ink:#ffffff;
+    --magenta:#b8237a;--orange:#c45a12;
+    --rgb:linear-gradient(90deg,#0f9e83 0%,#c42a85 52%,#d9661a 100%);
+    --code-bg:#15181c;--shadow:0 14px 40px rgba(20,30,40,.14);
+  }
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth;scroll-padding-top:16px}
+@media (prefers-reduced-motion: reduce){html{scroll-behavior:auto}}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,Ubuntu,Cantarell,"Noto Sans",sans-serif;
+  font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+a{color:var(--accent);text-underline-offset:3px}
+a:hover{text-decoration-thickness:2px}
+:focus-visible{outline:3px solid var(--accent);outline-offset:3px;border-radius:6px}
+img{max-width:100%;height:auto;display:block}
+code{font-family:var(--mono);font-size:.9em;background:var(--card);border:1px solid var(--border);
+  padding:.1em .4em;border-radius:6px;white-space:nowrap}
+.wrap{max-width:1040px;margin:0 auto;padding:0 18px}
+.prose{max-width:68ch}
+.skip{position:absolute;left:-999px;top:8px;background:var(--accent);color:var(--accent-ink);padding:10px 14px;border-radius:8px;z-index:10}
+.skip:focus{left:8px}
+
+/* top bar */
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0}
+.brand{display:flex;align-items:center;gap:10px;color:var(--fg);text-decoration:none;font-weight:650;font-size:18px;letter-spacing:-.01em;min-height:44px}
+.logo{position:relative;width:34px;height:34px;flex:none;border-radius:50%;
+  background:conic-gradient(from 200deg,#3dd6b5,#e0409a,#ff8a3d,#3dd6b5);
+  -webkit-mask:radial-gradient(circle,transparent 52%,#000 54%);mask:radial-gradient(circle,transparent 52%,#000 54%)}
+.logo.has-img{background:none;-webkit-mask:none;mask:none}
+.logo img{width:100%;height:100%;object-fit:contain;border-radius:50%}
+.top nav{display:flex;gap:4px}
+.top nav a{color:var(--mute);text-decoration:none;font-size:15px;padding:10px 10px;min-height:44px;display:inline-flex;align-items:center;border-radius:8px}
+.top nav a:hover{color:var(--fg);background:var(--card)}
+@media (max-width:560px){.top nav a.opt{display:none}}
+
+/* hero */
+.hero{padding:28px 0 8px;text-align:left}
+.eyebrow{display:inline-block;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--mute);
+  border:1px solid var(--border);border-radius:999px;padding:4px 12px;margin-bottom:16px}
+h1{font-size:clamp(32px,7.5vw,56px);line-height:1.08;letter-spacing:-.025em;margin:0 0 16px;font-weight:750}
+h1 .name{background:var(--rgb);-webkit-background-clip:text;background-clip:text;color:transparent}
+h1 .rest{display:block;font-size:.5em;line-height:1.25;letter-spacing:-.015em;font-weight:600;margin-top:10px;color:var(--fg)}
+.lede{font-size:18px;color:var(--mute);max-width:60ch;margin:0 0 24px}
+.lede strong{color:var(--fg);font-weight:600}
+.ctas{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:32px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:48px;padding:0 22px;border-radius:12px;
+  font-weight:650;font-size:16px;text-decoration:none;border:1px solid var(--border);color:var(--fg);background:var(--card)}
+.btn:hover{border-color:var(--mute)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn svg{width:18px;height:18px;flex:none}
+.shot{position:relative;margin:0}
+.shot::before{content:"";position:absolute;inset:8% 6% -4%;background:var(--rgb);filter:blur(48px);opacity:.28;z-index:0;border-radius:40px}
+.shot img{position:relative;z-index:1;filter:drop-shadow(var(--shadow))}
+.shot figcaption{position:relative;z-index:1;font-size:13px;color:var(--mute);margin-top:12px;text-align:center}
+.rgbline{height:3px;background:var(--rgb);border-radius:3px;margin:40px 0 0;opacity:.85}
+
+/* facts strip */
+.facts{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin:28px 0 0}
+@media (min-width:760px){.facts{grid-template-columns:repeat(4,1fr)}}
+.fact{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px}
+.fact .v{font-size:24px;font-weight:700;letter-spacing:-.02em;line-height:1.2}
+.fact .v small{font-size:14px;color:var(--mute);font-weight:600;margin-left:3px}
+.fact .l{font-size:13px;color:var(--mute);margin-top:2px}
+
+/* sections */
+section{padding:56px 0 8px}
+h2{font-size:clamp(24px,5vw,32px);letter-spacing:-.02em;line-height:1.2;margin:0 0 8px}
+h2 + .sub{color:var(--mute);margin:0 0 24px;max-width:64ch}
+h3{font-size:19px;letter-spacing:-.01em;margin:0 0 8px;line-height:1.3}
+.grid{display:grid;gap:14px;grid-template-columns:1fr}
+@media (min-width:760px){.grid.two{grid-template-columns:1fr 1fr}}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:20px}
+.card p{margin:0 0 10px}
+.card p:last-child{margin-bottom:0}
+.card ul{margin:0;padding-left:20px}
+.card li{margin:4px 0}
+.card .tag{display:inline-block;font-size:12px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--accent);margin-bottom:8px}
+.card.wide{grid-column:1/-1}
+.split{display:grid;gap:20px;align-items:center}
+@media (min-width:860px){.split{grid-template-columns:1fr 1.15fr}.split.rev > :first-child{order:2}}
+.split figure{margin:0}
+.split figure img{filter:drop-shadow(var(--shadow))}
+.split figcaption{font-size:13px;color:var(--mute);margin-top:10px;text-align:center}
+.hl{color:var(--fg);font-weight:600}
+.card .chips,.chips{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0;padding:0;list-style:none}
+.chips li{font-size:13px;border:1px solid var(--border);background:var(--card);border-radius:999px;padding:3px 10px;margin:0}
+.swatch{display:inline-block;width:.8em;height:.8em;border-radius:50%;background:var(--rgb);vertical-align:-1px;margin-right:6px}
+.modes{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:6px}
+@media (min-width:760px){.modes{grid-template-columns:repeat(3,1fr)}}
+.mode{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px}
+.mode b{display:block;font-size:15px}
+
+/* download */
+.dl{display:grid;gap:14px}
+@media (min-width:860px){.dl{grid-template-columns:1.4fr 1fr}.dl .src{grid-column:1/-1}}
+.dl .card{display:flex;flex-direction:column}
+.dl .card.rec{border-color:transparent;background:
+  linear-gradient(var(--panel),var(--panel)) padding-box,var(--rgb) border-box;border:1.5px solid transparent}
+.badge{align-self:flex-start;font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;
+  background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:3px 10px;margin-bottom:10px}
+.badge.mute{background:var(--card);color:var(--mute);border:1px solid var(--border)}
+.dl .card .meta{font-size:14px;color:var(--mute)}
+.dl .card .btn{margin-top:auto;align-self:flex-start}
+.dl .card .cmd{margin:12px 0 14px}
+.later{margin-top:14px}
+.later p{color:var(--mute)}
+
+/* command blocks */
+.cmd{position:relative;background:var(--code-bg);border:1px solid var(--border);border-radius:12px;margin:12px 0}
+.cmd .bar{display:flex;align-items:center;justify-content:space-between;padding:4px 4px 0 16px;font:600 12px/1 var(--mono);letter-spacing:.06em;text-transform:uppercase;color:#8b939c}
+.cmd pre{margin:0;padding:4px 16px 14px;overflow-x:auto;font-family:var(--mono);font-size:14px;line-height:1.7;color:#e6e8eb}
+.cmd pre .c{color:#8b939c}
+.cmd pre .p{color:#3dd6b5;user-select:none;-webkit-user-select:none}
+.copy{min-width:72px;min-height:44px;padding:0 12px;border-radius:9px;cursor:pointer;
+  font:600 13px/1 system-ui,sans-serif;color:#e6e8eb;background:#202429;border:1px solid #2b3036}
+.copy:hover{border-color:#8b939c}
+.copy.ok{color:#3dd6b5;border-color:#3dd6b5}
+
+/* tools list */
+.tools{display:grid;grid-template-columns:1fr;gap:8px;list-style:none;padding:0;margin:12px 0 0}
+@media (min-width:560px){.tools{grid-template-columns:1fr 1fr}}
+.tools li{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px;color:var(--mute)}
+.tools li code{display:block;background:none;border:0;padding:0;color:var(--fg);font-size:14px;margin-bottom:2px}
+.quote{border-left:3px solid;border-image:var(--rgb) 1;padding:6px 0 6px 16px;margin:18px 0 0;font-size:18px;font-style:italic}
+.quote .who{display:block;font-size:13px;font-style:normal;color:var(--mute);margin-top:6px}
+
+/* faq */
+details{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);margin:0 0 10px}
+summary{cursor:pointer;list-style:none;padding:16px 48px 16px 18px;font-weight:650;font-size:17px;min-height:44px;position:relative}
+summary::-webkit-details-marker{display:none}
+summary::after{content:"";position:absolute;right:20px;top:50%;width:9px;height:9px;border-right:2px solid var(--mute);border-bottom:2px solid var(--mute);transform:translateY(-70%) rotate(45deg);transition:transform .15s}
+details[open] summary::after{transform:translateY(-30%) rotate(-135deg)}
+details .body{padding:0 18px 18px}
+details .body p{margin:0 0 10px}
+.res{display:grid;grid-template-columns:1fr;gap:10px;margin:8px 0 12px}
+@media (min-width:560px){.res{grid-template-columns:1fr 1fr}}
+.res div{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:14px}
+.res b{display:block;font-size:12px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:4px}
+.res .yes b{color:var(--accent)}
+.res .no b{color:var(--orange)}
+.frame{font-family:var(--mono);font-size:15px;display:flex;flex-wrap:wrap;gap:4px;margin:8px 0 12px}
+.frame span{background:var(--card);border:1px solid var(--border);border-radius:6px;padding:2px 7px}
+.frame span.k{color:var(--accent)}
+
+/* footer */
+footer{margin-top:64px;border-top:1px solid var(--border);padding:28px 0 40px;color:var(--mute);font-size:14px}
+footer p{margin:0 0 8px;max-width:72ch}
+footer .links{display:flex;flex-wrap:wrap;gap:4px 18px;margin-top:12px}
+footer .links a{min-height:44px;display:inline-flex;align-items:center}
+.grid>*,.split>*,.dl>*,.res>*,.tools>*{min-width:0}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#" aria-label="emeetctl home">
+      <span class="logo" id="logo"><img src="img/logo.png" alt="" width="34" height="34"
+        onload="this.parentNode.classList.add('has-img')" onerror="this.remove()"></span>
+      emeetctl
+    </a>
+    <nav aria-label="Sections">
+      <a class="opt" href="#features">Features</a>
+      <a href="#download">Download</a>
+      <a class="opt" href="#faq">FAQ</a>
+      <a href="https://github.com/NicholasWM/emeetctl">GitHub</a>
+    </nav>
+  </header>
+</div>
+
+<main id="main">
+<div class="wrap">
+  <section class="hero" aria-labelledby="title" style="padding-top:20px">
+    <span class="eyebrow">Open source · MIT OR Apache-2.0</span>
+    <h1 id="title"><span class="name">emeetctl</span><span class="rest">Open source Linux control for the EMEET&nbsp;SmartCam&nbsp;S600L</span></h1>
+    <p class="lede">Ring light, image controls and live preview <strong>on Linux</strong>, where the vendor app (EMEET Studio) only exists for Windows and macOS.</p>
+    <div class="ctas">
+      <a class="btn primary" href="#download">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
+        Download for Linux
+      </a>
+      <a class="btn" href="https://github.com/NicholasWM/emeetctl">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.4-5.26 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+        View on GitHub
+      </a>
+    </div>
+    <figure class="shot">
+      <img src="img/screen-luz.png" width="1180" height="757"
+        alt="emeetctl window, Light tab: live preview area on the left; on the right, toggles for the fill light and the RGB ring, mode buttons (cool, warm, balanced, color, rainbow), color presets with a hex field set to ff3c00, and a brightness slider at 95%.">
+      <figcaption>The Light tab. The app interface is currently in Brazilian Portuguese.</figcaption>
+    </figure>
+
+    <div class="facts" role="list">
+      <div class="fact" role="listitem"><div class="v">any RGB</div><div class="l">ring color, not just 6 presets</div></div>
+      <div class="fact" role="listitem"><div class="v">~60<small>fps</small></div><div class="l">MJPEG 1280×720 live preview</div></div>
+      <div class="fact" role="listitem"><div class="v">3</div><div class="l">interfaces: GUI, CLI, MCP</div></div>
+      <div class="fact" role="listitem"><div class="v">0</div><div class="l">firmware writes, by design</div></div>
+    </div>
+  </section>
+</div>
+
+<div class="wrap"><div class="rgbline" aria-hidden="true"></div></div>
+
+<div class="wrap">
+  <section id="features" aria-labelledby="h-features">
+    <h2 id="h-features">Features</h2>
+    <p class="sub">Everything the S600L exposes for the light and the image, from one native Linux app.</p>
+
+    <div class="grid two" style="margin-bottom:14px">
+      <div class="card">
+        <span class="tag">Ring light</span>
+        <h3>Fill light and RGB ring</h3>
+        <ul>
+          <li>Fill light on/off and RGB ring on/off, independently.</li>
+          <li>Brightness control.</li>
+          <li><span class="swatch" aria-hidden="true"></span><span class="hl">Any RGB color.</span> The vendor app only offers 6 presets.</li>
+        </ul>
+        <div class="modes" role="list" aria-label="Light modes" style="margin-top:14px">
+          <div class="mode" role="listitem"><b>Cool</b></div>
+          <div class="mode" role="listitem"><b>Warm</b></div>
+          <div class="mode" role="listitem"><b>Balanced</b></div>
+          <div class="mode" role="listitem"><b>Fixed color</b></div>
+          <div class="mode" role="listitem"><b>Rainbow</b></div>
+        </div>
+      </div>
+      <div class="card">
+        <span class="tag">Live preview</span>
+        <h3>See what the camera sees</h3>
+        <p>MJPEG 1280×720 at ~60&nbsp;fps, right next to the controls.</p>
+        <p>When you pause the preview, the camera is <span class="hl">released</span>, so its in-use LED goes off.</p>
+      </div>
+    </div>
+
+    <div class="split">
+      <div class="card">
+        <span class="tag">Image controls</span>
+        <h3>Every image control, in one place</h3>
+        <ul class="chips" aria-label="Image controls">
+          <li>Brightness</li><li>Contrast</li><li>Saturation</li><li>Hue</li><li>Gamma</li><li>Sharpness</li>
+          <li>Gain</li><li>Backlight compensation</li><li>Exposure: auto / manual</li>
+          <li>White balance: auto / 2300–7500&nbsp;K</li><li>Focus: auto / manual</li><li>Zoom 0–400</li>
+          <li>Anti-flicker 50 / 60&nbsp;Hz</li><li>Factory reset</li>
+        </ul>
+        <p style="margin-top:14px">"Auto" switches unlock the matching manual control: turn auto exposure off and the exposure slider comes alive.</p>
+      </div>
+      <figure>
+        <img src="img/screen-imagem.png" width="1180" height="757" loading="lazy"
+          alt="emeetctl window, Image tab: exposure section with the Auto switch on and the exposure time slider locked, gain and backlight compensation sliders; white balance with Auto on and the temperature slider locked at 5000 K; brightness slider at 140.">
+        <figcaption>The Image tab.</figcaption>
+      </figure>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <span class="tag">Three ways to use it</span>
+      <h3>GUI, CLI and MCP server</h3>
+      <ul>
+        <li><code>emeetctl-gui</code> — the desktop app.</li>
+        <li><code>emeetctl</code> — the CLI, with <code>--json</code> output for scripts.</li>
+        <li><code>emeetctl-mcp</code> — an <a href="#mcp">MCP server</a>, so AI assistants (Claude Code and other MCP clients) can control the light and the image.</li>
+      </ul>
+    </div>
+
+    <div class="split rev" style="margin-top:14px">
+      <div class="card">
+        <span class="tag">Safe by design</span>
+        <h3>Only what the vendor app sends</h3>
+        <p>emeetctl only ever sends the light commands observed in the vendor app. Any opcode that was not seen in the capture is refused.</p>
+        <p>Firmware updates are <span class="hl">deliberately unsupported</span>, and the Device tab says so.</p>
+      </div>
+      <figure>
+        <img src="img/screen-dispositivo.png" width="1180" height="757" loading="lazy"
+          alt="emeetctl window, Device tab: product EMEET SmartCam S600L, serial number, firmware 1.0.19, light channel /dev/hidraw0, video /dev/video1, and a note that firmware updates are not supported on purpose.">
+        <figcaption>The Device tab.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="download" aria-labelledby="h-download">
+    <h2 id="h-download">Download</h2>
+    <p class="sub">Linux, x86_64. Pick the package that matches your distro.</p>
+
+    <div class="dl">
+      <div class="card rec">
+        <span class="badge">Recommended</span>
+        <h3>.deb package</h3>
+        <p class="meta">Ubuntu 24.04+, Debian 13+, Linux Mint 22+, Pop!_OS 24.04+</p>
+        <p>Installs the udev rule automatically, so the light works <span class="hl">without sudo</span>. File: <code>emeetctl_&lt;version&gt;-1_amd64.deb</code></p>
+        <div class="cmd"><pre><span class="p">$ </span>sudo apt install ./emeetctl_0.1.0-1_amd64.deb</pre></div>
+        <a class="btn primary" href="https://github.com/NicholasWM/emeetctl/releases/latest">Latest release</a>
+      </div>
+      <div class="card">
+        <span class="badge mute">Any distro</span>
+        <h3>Binary tarball</h3>
+        <p class="meta">Any distro with glibc 2.39+</p>
+        <p><code style="white-space:normal;overflow-wrap:anywhere">emeetctl-0.1.0-x86_64-linux.tar.gz</code></p>
+        <p>Needs the <a href="#udev">udev rule step</a> done manually.</p>
+        <a class="btn" href="https://github.com/NicholasWM/emeetctl/releases/latest">Latest release</a>
+      </div>
+      <div class="card src">
+        <span class="badge mute">Rust 1.81+</span>
+        <h3>From source</h3>
+        <div class="cmd"><pre><span class="p">$ </span>git clone https://github.com/NicholasWM/emeetctl
+<span class="p">$ </span>cd emeetctl
+<span class="p">$ </span>cargo install --path crates/emeetctl-gui
+<span class="p">$ </span>cargo install --path crates/emeetctl-cli
+<span class="p">$ </span>cargo install --path crates/emeetctl-mcp</pre></div>
+        <p class="meta">Then do the <a href="#udev">udev rule step</a>.</p>
+      </div>
+    </div>
+
+    <div class="card" id="udev" style="margin-top:14px">
+      <h3>udev rule (tarball and source installs)</h3>
+      <p>The light is driven through <code>/dev/hidraw</code>. This rule lets your user talk to it without root.</p>
+      <div class="cmd"><pre><span class="p">$ </span>sudo cp udev/70-emeetctl.rules /etc/udev/rules.d/
+<span class="p">$ </span>sudo udevadm control --reload
+<span class="p">$ </span>sudo udevadm trigger --subsystem-match=hidraw --action=change</pre></div>
+    </div>
+
+    <div class="card later">
+      <h3>Coming later</h3>
+      <ul class="chips" aria-label="Planned packages"><li>AppImage</li><li>AUR</li><li>Flatpak</li></ul>
+      <p style="margin-top:12px">Flatpak is the hard one: its sandbox cannot install the hidraw udev rule the light depends on.</p>
+    </div>
+  </section>
+
+  <section id="cli" aria-labelledby="h-cli">
+    <h2 id="h-cli">CLI quick tour</h2>
+    <p class="sub">Same controls as the GUI, scriptable. Add <code>--json</code> for machine-readable output.</p>
+    <div class="cmd"><pre><span class="p">$ </span>emeetctl status
+<span class="p">$ </span>emeetctl color 123456
+<span class="p">$ </span>emeetctl rainbow
+<span class="p">$ </span>emeetctl mode warm
+<span class="p">$ </span>emeetctl brightness 30
+<span class="p">$ </span>emeetctl off rgb
+<span class="p">$ </span>emeetctl image set zoom_absolute 200
+<span class="p">$ </span>emeetctl image reset
+<span class="p">$ </span>emeetctl --json status</pre></div>
+  </section>
+
+  <section id="mcp" aria-labelledby="h-mcp">
+    <h2 id="h-mcp">MCP server</h2>
+    <p class="sub">Let your AI assistant drive the camera. Register it once with Claude Code, or with any other MCP client.</p>
+    <div class="cmd"><pre><span class="p">$ </span>claude mcp add emeetctl -- emeetctl-mcp</pre></div>
+    <ul class="tools" aria-label="MCP tools">
+      <li><code>get_status</code>light state and device info</li>
+      <li><code>set_light_power</code>fill light / RGB ring on-off</li>
+      <li><code>set_light_color</code>any RGB color</li>
+      <li><code>set_light_mode</code>light mode</li>
+      <li><code>set_light_brightness</code>light brightness</li>
+      <li><code>list_image_controls</code>available image controls</li>
+      <li><code>set_image_control</code>set one image control</li>
+      <li><code>reset_image_controls</code>back to factory values</li>
+    </ul>
+    <p class="quote">"turn my camera ring red while I'm in a meeting"<span class="who">plain language in, MCP tool calls out</span></p>
+  </section>
+
+  <section id="faq" aria-labelledby="h-faq">
+    <h2 id="h-faq">FAQ and camera quirks</h2>
+    <p class="sub">Things the hardware does that are worth knowing.</p>
+
+    <details>
+      <summary>Zoom does nothing</summary>
+      <div class="body">
+        <p>The camera only applies digital zoom in <span class="hl">MJPEG below 1080p</span>. Measured frame by frame:</p>
+        <div class="res">
+          <div class="yes"><b>Zoom works</b>MJPEG 2560×1440, 1280×960, 1280×720, 1024×576, 960×720, 800×600, 640×480, 640×360</div>
+          <div class="no"><b>Zoom ignored</b>MJPEG 1920×1080, MJPEG 3840×2160, and every YUYV mode</div>
+        </div>
+        <p>EMEET's own FAQ also says the field of view is fixed at 4K and 1080p. Check which resolution your video app is using.</p>
+      </div>
+    </details>
+
+    <details>
+      <summary>Permission denied on /dev/hidraw</summary>
+      <div class="body"><p>Install the <a href="#udev">udev rule</a>. The .deb package does this for you.</p></div>
+    </details>
+
+    <details>
+      <summary>Other EMEET models?</summary>
+      <div class="body"><p>Only the S600L (USB <code>328f:00ef</code>) has been tested. Contributions with USB captures from other models are welcome on <a href="https://github.com/NicholasWM/emeetctl">GitHub</a>.</p></div>
+    </details>
+
+    <details>
+      <summary>How was the protocol found?</summary>
+      <div class="body">
+        <p>By passive USB capture of EMEET Studio 2.0.4 (firmware 1.0.19). No decompilation.</p>
+        <p>The frame format:</p>
+        <div class="frame" aria-label="Frame format: 09 02 02 OP LL LL LL LL data">
+          <span>09</span><span>02</span><span>02</span><span class="k">OP</span><span>LL</span><span>LL</span><span>LL</span><span>LL</span><span class="k">data</span>
+        </div>
+        <p>No checksum, with SET/GET pairs for power, color, brightness and mode. Full write-up in the <a href="https://github.com/NicholasWM/emeetctl#protocol">README</a>.</p>
+      </div>
+    </details>
+  </section>
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Not affiliated with or endorsed by EMEET. "EMEET" is used only to identify the supported hardware.</p>
+    <p>Licensed under MIT OR Apache-2.0.</p>
+    <div class="links">
+      <a href="https://github.com/NicholasWM/emeetctl">GitHub</a>
+      <a href="https://github.com/NicholasWM/emeetctl/releases/latest">Releases</a>
+      <a href="https://github.com/NicholasWM/emeetctl#readme">README</a>
+    </div>
+  </div>
+</footer>
+
+<div class="sr" aria-live="polite" id="live"></div>
+
+<script>
+(function(){
+  // favicon fallback: CSS-free ring as SVG if img/logo.png is missing
+  var ring = "data:image/svg+xml," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><defs><linearGradient id="g" x1="0" x2="1">' +
+    '<stop offset="0" stop-color="#3dd6b5"/><stop offset=".5" stop-color="#e0409a"/><stop offset="1" stop-color="#ff8a3d"/>' +
+    '</linearGradient></defs><circle cx="16" cy="16" r="11" fill="none" stroke="url(#g)" stroke-width="6"/></svg>');
+  var probe = new Image();
+  probe.onerror = function(){ document.getElementById('favicon').href = ring; };
+  probe.src = 'img/logo.png';
+
+  // copy buttons on every command block
+  var live = document.getElementById('live');
+  document.querySelectorAll('.cmd').forEach(function(box){
+    var pre = box.querySelector('pre');
+    var btn = document.createElement('button');
+    btn.type = 'button'; btn.className = 'copy'; btn.textContent = 'Copy';
+    btn.setAttribute('aria-label', 'Copy command');
+    btn.addEventListener('click', function(){
+      var text = Array.prototype.map.call(pre.textContent.split('\n'), function(l){
+        return l.replace(/^\$ /, '');
+      }).join('\n').trim();
+      var done = function(ok){
+        btn.textContent = ok ? 'Copied' : 'Select';
+        btn.classList.toggle('ok', ok);
+        live.textContent = ok ? 'Copied to clipboard' : 'Copy failed, select the text manually';
+        setTimeout(function(){ btn.textContent = 'Copy'; btn.classList.remove('ok'); }, 1800);
+      };
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(function(){ done(true); }, function(){ done(false); });
+      } else {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta); ta.select();
+        var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+        ta.remove(); done(ok);
+      }
+    });
+    var bar = document.createElement('div');
+    bar.className = 'bar';
+    bar.innerHTML = '<span aria-hidden="true">shell</span>';
+    bar.appendChild(btn);
+    box.insertBefore(bar, pre);
+  });
+})();
+</script>
+</body>
+</html>
