@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Gera os pacotes de release em dist/: .deb (cargo-deb) e tarball dos binários.
-# Uso: packaging/release.sh            (só gera)
-#      packaging/release.sh --publish  (gera e publica no GitHub Releases com tag v<versão>)
+# Uso: packaging/release.sh
+# Publicar não é daqui: a tag v<versão> empurrada para o GitHub dispara
+# .github/workflows/release.yml, que roda este script e sobe o GitHub Release.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
@@ -20,8 +21,3 @@ cp target/debian/emeetctl_"${VERSION}"-1_amd64.deb dist/
 (cd dist && sha256sum ./* > SHA256SUMS)
 ls -la dist
 
-if [ "${1:-}" = "--publish" ]; then
-    git tag -a "v${VERSION}" -m "v${VERSION}" 2>/dev/null || true
-    git push github "v${VERSION}"
-    gh release create "v${VERSION}" dist/* --repo NicholasWM/emeetctl --title "emeetctl ${VERSION}" --generate-notes
-fi
