@@ -1,0 +1,15 @@
+[package]
+name = "emeetctl-cli"
+description = "CLI do emeetctl: luz e imagem da EMEET SmartCam S600L"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "emeetctl"
+path = "src/main.rs"
+
+[dependencies]
+emeetctl-core.workspace = true
+clap.workspace = true
+serde_json.workspace = true
