@@ -17,7 +17,7 @@ The vendor app (EMEET Studio) only exists for Windows and macOS. The light proto
 | **Any** RGB color (the vendor app has 6 presets) | ✔ | `emeetctl color ff0000` | `set_light_color` |
 | Light brightness | ✔ | `emeetctl brightness 40` | `set_light_brightness` |
 | Image: brightness, contrast, saturation, hue, gamma, gain, sharpness, white balance, exposure, focus, zoom, anti-flicker, backlight | ✔ | `emeetctl image list/get/set/reset` | `list_image_controls`, `set_image_control`, `reset_image_controls` |
-| Live camera preview (YUYV 640×480, MJPEG fallback; released when toggled off) | ✔ | | |
+| Live camera preview (MJPEG 1280×720, YUYV fallback; released when paused) | ✔ | | |
 | Device info (serial, firmware) | ✔ | `emeetctl info` | `get_status` |
 
 Firmware update is deliberately **not** supported. The vendor HID channel may carry firmware commands, so `emeetctl` refuses to send any opcode that was not observed in the capture.
@@ -89,6 +89,11 @@ Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `se
 Every SET is acknowledged with a single `20` byte. The camera also pushes state frames on its own when the mode changes, so replies are matched by opcode.
 
 Brightness ranges seen in the vendor slider: ambient/rainbow `0x14–0xff`, cool `0x37–0x64`. Warm and balanced were not measured (assumed equal to cool).
+
+## Camera quirks
+
+- **Digital zoom only applies in MJPEG below 1080p.** Measured frame by frame: zoom works in MJPEG 2560×1440, 1280×960, 1280×720, 1024×576, 960×720, 800×600, 640×480 and 640×360, and is ignored in MJPEG 1920×1080, 3840×2160 and every YUYV mode (EMEET's FAQ also says the field of view is fixed in 4K and 1080p). If zoom "does nothing", check the resolution/format your video app is using.
+- Switching the ring to a color or mode may turn the fill light flag on by itself.
 
 ## Not mapped yet
 
