@@ -31,8 +31,17 @@ pub struct VirtualCam {
     pub installed: bool,
     pub active: bool,
     pub enabled: bool,
-    /// Nó `/dev/videoN` da "emeetctl Camera", se já foi criado.
-    pub device: Option<String>,
+    /// Saídas já criadas, em ordem ("emeetctl Camera", "emeetctl Camera 2", ...).
+    pub outputs: Vec<VirtualOutput>,
+}
+
+#[derive(Clone, Default)]
+pub struct VirtualOutput {
+    pub label: String,
+    /// Nó `/dev/videoN`.
+    pub device: String,
+    /// Programas lendo esta saída (fora o próprio emeetctl).
+    pub users: Option<String>,
 }
 
 const UNIT: &str = "emeetctl-virtualcam.service";
@@ -57,7 +66,15 @@ fn virtualcam_state() -> VirtualCam {
         installed: !enabled.is_empty() && enabled != "not-found",
         active: systemctl(&["is-active", UNIT]).is_ok_and(|s| s == "active"),
         enabled: enabled == "enabled",
-        device: emeetctl_core::virtualcam::find_device().map(|p| p.display().to_string()),
+        outputs: emeetctl_core::virtualcam::find_devices()
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| VirtualOutput {
+                label: emeetctl_core::virtualcam::label(i),
+                users: emeetctl_core::describe_users(&emeetctl_core::camera_users(&p)),
+                device: p.display().to_string(),
+            })
+            .collect(),
     }
 }
 

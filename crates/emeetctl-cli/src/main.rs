@@ -50,8 +50,13 @@ enum Cmd {
     /// Controles de imagem (UVC)
     #[command(subcommand)]
     Image(ImageCmd),
-    /// Câmera virtual "emeetctl Camera": republica a S600L para vários apps ao mesmo tempo (Ctrl+C para parar)
-    Virtualcam,
+    /// Câmera virtual "emeetctl Camera": republica a S600L em várias saídas, uma por app (Ctrl+C para parar)
+    Virtualcam {
+        /// Quantas saídas criar ("emeetctl Camera", "emeetctl Camera 2", ...): cada
+        /// programa usa uma.
+        #[arg(long, default_value_t = emeetctl_core::virtualcam::DEFAULT_OUTPUTS)]
+        outputs: usize,
+    },
 }
 
 #[derive(Subcommand)]
@@ -218,23 +223,29 @@ fn run(cli: Cli) -> R {
             v.set(c.id, value)?;
             println!("{} = {}", c.key, v.get(c.id)?);
         }
-        Cmd::Virtualcam => {
+        Cmd::Virtualcam { outputs } => {
             let paths = emeetctl_core::find()?;
             let src = paths.video.ok_or("nó de vídeo da câmera não encontrado")?;
             let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let s = stop.clone();
             ctrlc_handler(move || s.store(true, std::sync::atomic::Ordering::Relaxed));
-            let sink = emeetctl_core::virtualcam::ensure_device()?;
+            let sinks = emeetctl_core::virtualcam::ensure_devices(outputs)?;
+            for (i, sink) in sinks.iter().enumerate() {
+                eprintln!(
+                    "saída \"{}\" em {}",
+                    emeetctl_core::virtualcam::label(i),
+                    sink.display()
+                );
+            }
             eprintln!(
-                "câmera virtual \"{}\" em {} ← {} (MJPEG {}x{} → YUYV)",
-                emeetctl_core::virtualcam::LABEL,
-                sink.display(),
+                "câmera virtual: {} saídas ← {} (MJPEG {}x{} → YUYV)",
+                sinks.len(),
                 src.display(),
                 emeetctl_core::virtualcam::WIDTH,
                 emeetctl_core::virtualcam::HEIGHT
             );
             let mut last = std::time::Instant::now() - std::time::Duration::from_secs(60);
-            emeetctl_core::virtualcam::run(&src, &stop, |fps| {
+            emeetctl_core::virtualcam::run(&src, &sinks, &stop, |fps| {
                 // um log por minuto: o serviço roda o dia todo
                 if last.elapsed() >= std::time::Duration::from_secs(60) {
                     eprintln!("{fps:.0} fps");

@@ -222,14 +222,18 @@ impl App {
             self.preview_error = None;
         }
         self.focused = focused;
-        // Com a câmera virtual ligada a prévia lê dela, que aceita vários leitores:
-        // não precisa soltar nada ao perder o foco.
-        let virtual_dev = self
+        // Com a câmera virtual ligada a prévia lê da última saída. Havendo mais de
+        // uma, as outras ficam para os apps e a prévia não precisa soltar a dela ao
+        // perder o foco; com uma só, solta como faria com a câmera física.
+        let outputs = self
             .snap
             .as_ref()
             .filter(|s| s.virtualcam.active)
-            .and_then(|s| s.virtualcam.device.clone());
-        let wanted = self.preview_on && (focused || virtual_dev.is_some());
+            .map(|s| s.virtualcam.outputs.clone())
+            .unwrap_or_default();
+        let keep = outputs.len() > 1;
+        let virtual_dev = outputs.last().map(|o| o.device.clone());
+        let wanted = self.preview_on && (focused || keep);
         let video = virtual_dev.or_else(|| {
             self.snap
                 .as_ref()
@@ -645,8 +649,9 @@ impl App {
         card(ui, "Câmera virtual", |ui| {
             ui.label(
                 RichText::new(
-                    "A \"emeetctl Camera\" lê a S600L uma vez e entrega a imagem para vários apps ao mesmo tempo \
-                     (Meet, Zoom, OBS e esta prévia). Nos apps, escolha \"emeetctl Camera\" como câmera.",
+                    "A câmera virtual lê a S600L uma vez e entrega a mesma imagem em várias saídas: \
+                     \"emeetctl Camera\", \"emeetctl Camera 2\"... Cada app usa uma saída; a última fica \
+                     com esta prévia.",
                 )
                 .color(MUTED),
             );
@@ -658,13 +663,33 @@ impl App {
                 return;
             }
             let mut active = vc.active;
-            let hint = match (&vc.device, vc.active) {
-                (Some(d), true) => format!("transmitindo em {d}"),
+            let hint = match (vc.outputs.len(), vc.active) {
+                (n, true) if n > 0 => format!("transmitindo em {n} saídas"),
                 (_, true) => "iniciando…".to_string(),
                 _ => "desligada".to_string(),
             };
             if switch_row(ui, "Ligada", Some(&hint), &mut active) {
                 self.send(Cmd::VirtualCam(active));
+            }
+            if vc.active && !vc.outputs.is_empty() {
+                ui.add_space(4.0);
+                egui::Grid::new("vcam-outputs")
+                    .num_columns(2)
+                    .spacing([12.0, 4.0])
+                    .show(ui, |ui| {
+                        for o in &vc.outputs {
+                            let preview = self.preview.is_some()
+                                && self.preview_src.as_deref() == Some(o.device.as_str());
+                            let who = match (&o.users, preview) {
+                                (Some(u), _) => u.clone(),
+                                (None, true) => "esta prévia".to_string(),
+                                (None, false) => "livre".to_string(),
+                            };
+                            ui.label(&o.label).on_hover_text(&o.device);
+                            ui.label(RichText::new(who).color(MUTED));
+                            ui.end_row();
+                        }
+                    });
             }
             ui.separator();
             let mut enabled = vc.enabled;
