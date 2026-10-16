@@ -49,7 +49,11 @@ impl Preview {
                 ctx.request_repaint();
             }
         });
-        Preview { stop, handle: Some(handle), shared }
+        Preview {
+            stop,
+            handle: Some(handle),
+            shared,
+        }
     }
 }
 
@@ -64,7 +68,12 @@ impl Drop for Preview {
 
 const EBUSY: i32 = 16;
 
-fn capture(path: &PathBuf, stop: &AtomicBool, shared: &Mutex<Shared>, ctx: &egui::Context) -> std::io::Result<()> {
+fn capture(
+    path: &PathBuf,
+    stop: &AtomicBool,
+    shared: &Mutex<Shared>,
+    ctx: &egui::Context,
+) -> std::io::Result<()> {
     let dev = Device::with_path(path)?;
     let mut fmt = dev.format()?;
     fmt.width = WIDTH;
@@ -108,7 +117,12 @@ fn capture(path: &PathBuf, stop: &AtomicBool, shared: &Mutex<Shared>, ctx: &egui
 fn yuyv_to_image(data: &[u8], w: usize, h: usize) -> ColorImage {
     let mut rgb = Vec::with_capacity(w * h * 3);
     for px in data.chunks_exact(4).take(w * h / 2) {
-        let (y0, u, y1, v) = (px[0] as f32, px[1] as f32 - 128.0, px[2] as f32, px[3] as f32 - 128.0);
+        let (y0, u, y1, v) = (
+            px[0] as f32,
+            px[1] as f32 - 128.0,
+            px[2] as f32,
+            px[3] as f32 - 128.0,
+        );
         for y in [y0, y1] {
             let c = 1.164 * (y - 16.0);
             rgb.push((c + 1.596 * v).clamp(0.0, 255.0) as u8);

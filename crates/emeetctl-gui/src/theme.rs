@@ -2,7 +2,8 @@
 //! (switch, controle segmentado, amostra de cor redonda, linha de slider larga).
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontId, Margin, Response, RichText, Sense, Stroke, StrokeKind, TextStyle, Ui,
+    self, Color32, CornerRadius, FontId, Margin, Response, RichText, Sense, Stroke, StrokeKind,
+    TextStyle, Ui,
 };
 
 pub const BG: Color32 = Color32::from_rgb(0x12, 0x14, 0x17);
@@ -28,7 +29,11 @@ pub fn apply(ctx: &egui::Context) {
     v.selection.stroke = Stroke::new(1.0, ACCENT);
     v.hyperlink_color = ACCENT;
     v.slider_trailing_fill = true;
-    for w in [&mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active] {
+    for w in [
+        &mut v.widgets.inactive,
+        &mut v.widgets.hovered,
+        &mut v.widgets.active,
+    ] {
         w.corner_radius = CornerRadius::same(8);
     }
     v.widgets.inactive.bg_fill = FIELD;
@@ -47,11 +52,16 @@ pub fn apply(ctx: &egui::Context) {
         s.spacing.item_spacing = egui::vec2(10.0, 10.0);
         s.spacing.button_padding = egui::vec2(12.0, 6.0);
         s.spacing.interact_size.y = 26.0;
-        s.text_styles.insert(TextStyle::Body, FontId::proportional(14.5));
-        s.text_styles.insert(TextStyle::Button, FontId::proportional(14.0));
-        s.text_styles.insert(TextStyle::Small, FontId::proportional(12.0));
-        s.text_styles.insert(TextStyle::Heading, FontId::proportional(20.0));
-        s.text_styles.insert(TextStyle::Monospace, FontId::monospace(13.0));
+        s.text_styles
+            .insert(TextStyle::Body, FontId::proportional(14.5));
+        s.text_styles
+            .insert(TextStyle::Button, FontId::proportional(14.0));
+        s.text_styles
+            .insert(TextStyle::Small, FontId::proportional(12.0));
+        s.text_styles
+            .insert(TextStyle::Heading, FontId::proportional(20.0));
+        s.text_styles
+            .insert(TextStyle::Monospace, FontId::monospace(13.0));
     });
 }
 
@@ -64,7 +74,12 @@ pub fn card<R>(ui: &mut Ui, title: &str, add: impl FnOnce(&mut Ui) -> R) -> R {
         .inner_margin(Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new(title.to_uppercase()).size(11.5).color(MUTED).strong());
+            ui.label(
+                RichText::new(title.to_uppercase())
+                    .size(11.5)
+                    .color(MUTED)
+                    .strong(),
+            );
             ui.add_space(4.0);
             add(ui)
         })
@@ -83,10 +98,16 @@ pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
         let t = ui.ctx().animate_bool_responsive(resp.id, *on);
         let track = lerp_color(FIELD, ACCENT, t);
         let radius = rect.height() / 2.0;
-        ui.painter().rect(rect, radius, track, Stroke::NONE, StrokeKind::Inside);
+        ui.painter()
+            .rect(rect, radius, track, Stroke::NONE, StrokeKind::Inside);
         let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
-        let knob = if resp.hovered() { Color32::WHITE } else { Color32::from_gray(235) };
-        ui.painter().circle_filled(egui::pos2(x, rect.center().y), radius - 3.5, knob);
+        let knob = if resp.hovered() {
+            Color32::WHITE
+        } else {
+            Color32::from_gray(235)
+        };
+        ui.painter()
+            .circle_filled(egui::pos2(x, rect.center().y), radius - 3.5, knob);
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
@@ -100,8 +121,10 @@ pub fn switch_row(ui: &mut Ui, label: &str, hint: Option<&str>, on: &mut bool) -
                 ui.label(RichText::new(h).small().color(MUTED));
             }
         });
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| switch(ui, on).changed())
-            .inner
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            switch(ui, on).changed()
+        })
+        .inner
     })
     .inner
 }
@@ -139,18 +162,32 @@ pub fn swatch(ui: &mut Ui, rgb: [u8; 3], selected: bool, hint: &str) -> Response
         } else if resp.hovered() {
             ui.painter().circle_stroke(c, 16.0, Stroke::new(1.5, MUTED));
         }
-        ui.painter().circle_filled(c, 12.5, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+        ui.painter()
+            .circle_filled(c, 12.5, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
     }
-    resp.on_hover_text(hint).on_hover_cursor(egui::CursorIcon::PointingHand)
+    resp.on_hover_text(hint)
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// Rótulo em cima, slider ocupando a largura toda e o valor à direita.
-pub fn slider_row(ui: &mut Ui, label: &str, value: &mut i32, range: std::ops::RangeInclusive<i32>, step: i32, enabled: bool, suffix: &str) -> bool {
+pub fn slider_row(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut i32,
+    range: std::ops::RangeInclusive<i32>,
+    step: i32,
+    enabled: bool,
+    suffix: &str,
+) -> bool {
     ui.label(RichText::new(label).color(if enabled { TEXT } else { MUTED }));
     ui.add_enabled_ui(enabled, |ui| {
         ui.spacing_mut().slider_width = (ui.available_width() - 76.0).max(80.0);
-        ui.add(egui::Slider::new(value, range).step_by(step.max(1) as f64).suffix(suffix))
-            .changed()
+        ui.add(
+            egui::Slider::new(value, range)
+                .step_by(step.max(1) as f64)
+                .suffix(suffix),
+        )
+        .changed()
     })
     .inner
 }
@@ -167,9 +204,15 @@ pub fn chip(ui: &mut Ui, pos: egui::Pos2, text: &str, dot: Option<Color32>) {
     let pad = egui::vec2(10.0, 5.0);
     let dot_w = if dot.is_some() { 14.0 } else { 0.0 };
     let rect = egui::Rect::from_min_size(pos, galley.size() + pad * 2.0 + egui::vec2(dot_w, 0.0));
-    ui.painter().rect_filled(rect, 999.0, Color32::from_black_alpha(170));
+    ui.painter()
+        .rect_filled(rect, 999.0, Color32::from_black_alpha(170));
     if let Some(c) = dot {
-        ui.painter().circle_filled(egui::pos2(rect.left() + pad.x + 4.0, rect.center().y), 4.0, c);
+        ui.painter().circle_filled(
+            egui::pos2(rect.left() + pad.x + 4.0, rect.center().y),
+            4.0,
+            c,
+        );
     }
-    ui.painter().galley(rect.min + pad + egui::vec2(dot_w, 0.0), galley, TEXT);
+    ui.painter()
+        .galley(rect.min + pad + egui::vec2(dot_w, 0.0), galley, TEXT);
 }

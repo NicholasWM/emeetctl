@@ -1,0 +1,46 @@
+name: CI
+
+# fmt, clippy (avisos são erros) e testes em toda PR e push na master.
+# Actions de terceiros pinadas por SHA de commit (a tag no comentário é só para humanos).
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  check:
+    name: fmt, clippy, test
+    # 22.04 de propósito: o mesmo glibc (2.35) que os pacotes de release usam.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Toolchain (versão do rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Formatação
+        run: cargo fmt --all --check
+
+      - name: Clippy (avisos são erros)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Testes
+        run: cargo test --workspace --locked

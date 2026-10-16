@@ -53,7 +53,11 @@ impl DevicePaths {
         DeviceInfo {
             product: read("product"),
             serial: read("serial"),
-            firmware: if bcd.is_empty() { String::new() } else { firmware },
+            firmware: if bcd.is_empty() {
+                String::new()
+            } else {
+                firmware
+            },
             hidraw: self.hidraw.as_ref().map(|p| p.display().to_string()),
             video: self.video.as_ref().map(|p| p.display().to_string()),
         }
@@ -92,7 +96,9 @@ fn find_video() -> (Option<PathBuf>, Option<PathBuf>) {
             continue;
         }
         if let Some(usb) = usb_parent(&e.path().join("device")) {
-            if read_hex(&usb.join("idVendor")) == Some(VID) && read_hex(&usb.join("idProduct")) == Some(PID) {
+            if read_hex(&usb.join("idVendor")) == Some(VID)
+                && read_hex(&usb.join("idProduct")) == Some(PID)
+            {
                 return (Some(Path::new("/dev").join(e.file_name())), Some(usb));
             }
         }

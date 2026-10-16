@@ -102,7 +102,9 @@ pub fn key_of(name: &str) -> String {
 
 impl Video {
     pub fn open(path: &Path) -> Result<Video> {
-        Ok(Video { file: open_rw(path, false)? })
+        Ok(Video {
+            file: open_rw(path, false)?,
+        })
     }
 
     pub fn controls(&self) -> Result<Vec<Control>> {
@@ -130,7 +132,9 @@ impl Video {
             let kind = match q.kind {
                 1 => ControlKind::Integer,
                 2 => ControlKind::Boolean,
-                3 => ControlKind::Menu { items: self.menu_items(q.id, q.minimum, q.maximum) },
+                3 => ControlKind::Menu {
+                    items: self.menu_items(q.id, q.minimum, q.maximum),
+                },
                 _ => continue, // classes, botões e tipos compostos ficam fora
             };
             let name = cstr(&q.name);
@@ -154,7 +158,12 @@ impl Video {
     fn menu_items(&self, id: u32, min: i32, max: i32) -> Vec<(i32, String)> {
         (min..=max)
             .filter_map(|i| {
-                let mut m = QueryMenu { id, index: i as u32, name: [0; 32], reserved: 0 };
+                let mut m = QueryMenu {
+                    id,
+                    index: i as u32,
+                    name: [0; 32],
+                    reserved: 0,
+                };
                 ioctl(&self.file, VIDIOC_QUERYMENU, &mut m).ok()?;
                 let name = m.name;
                 Some((i, cstr(&name)))
@@ -171,14 +180,18 @@ impl Video {
     pub fn set(&self, id: u32, value: i32) -> Result<()> {
         let mut c = Ctrl { id, value };
         ioctl(&self.file, VIDIOC_S_CTRL, &mut c).map_err(|e| {
-            Error::Invalid(format!("não aceitou o valor {value} no controle 0x{id:08x}: {e}"))
+            Error::Invalid(format!(
+                "não aceitou o valor {value} no controle 0x{id:08x}: {e}"
+            ))
         })
     }
 
     /// Acha um controle pela chave curta, pelo nome do kernel ou pelo id numérico.
     pub fn find(&self, needle: &str) -> Result<Control> {
         let key = key_of(needle);
-        let id = needle.strip_prefix("0x").and_then(|h| u32::from_str_radix(h, 16).ok());
+        let id = needle
+            .strip_prefix("0x")
+            .and_then(|h| u32::from_str_radix(h, 16).ok());
         self.controls()?
             .into_iter()
             .find(|c| c.key == key || Some(c.id) == id)
@@ -215,7 +228,13 @@ mod tests {
 
     #[test]
     fn keys() {
-        assert_eq!(key_of("Focus, Automatic Continuous"), "focus_automatic_continuous");
-        assert_eq!(key_of("White Balance Temperature"), "white_balance_temperature");
+        assert_eq!(
+            key_of("Focus, Automatic Continuous"),
+            "focus_automatic_continuous"
+        );
+        assert_eq!(
+            key_of("White Balance Temperature"),
+            "white_balance_temperature"
+        );
     }
 }

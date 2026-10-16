@@ -1,0 +1,58 @@
+name: Release
+
+# Tag v<versão> no GitHub -> confere a tag contra o Cargo.toml, testa, empacota
+# (.deb + tarball + SHA256SUMS) e publica o GitHub Release. Usa o GITHUB_TOKEN
+# do próprio workflow: nenhum segredo extra.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag já existente a (re)publicar, ex.: v0.2.0'
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  release:
+    # 22.04: binários ligados ao glibc 2.35, rodam no Ubuntu 22.04+ e Debian 12+.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+
+      - name: A tag bate com a versão do Cargo.toml
+        run: |
+          VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          test "$TAG" = "v$VERSION" || { echo "::error::tag $TAG != versão v$VERSION do Cargo.toml"; exit 1; }
+
+      - name: Toolchain e cargo-deb
+        run: |
+          rustup show active-toolchain || rustup toolchain install
+          cargo install cargo-deb --locked --version 3.8.0
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2.8.2
+
+      - name: Empacotar (testes + build + .deb + tarball)
+        run: packaging/release.sh
+
+      - name: Publicar no GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --title "emeetctl ${TAG#v}" --generate-notes --verify-tag
+          fi
