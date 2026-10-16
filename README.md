@@ -1,5 +1,7 @@
 # emeetctl
 
+**Website and downloads:** https://nicholaswm.github.io/emeetctl/
+
 Open source Linux control for the **EMEET SmartCam S600L** webcam (USB `328f:00ef`): the ring light (RGB + fill light) and the image controls, with a **GUI**, a **CLI** and an **MCP server** so AI agents can drive the camera too.
 
 The vendor app (EMEET Studio) only exists for Windows and macOS. The light protocol was reverse engineered from a passive USB capture of EMEET Studio 2.0.4 (firmware 1.0.19), with no decompilation; see [Protocol](#protocol).
