@@ -256,14 +256,39 @@ impl App {
             }
         });
 
+        // Com o anel RGB desligado, cor e arco-íris não têm o que acender: somem da tela.
+        let ring_on = st.ambient.unwrap_or(false);
         card(ui, "Modo", |ui| {
-            let modes = [Mode::Cool, Mode::Warm, Mode::Balanced, Mode::Ambient, Mode::Rainbow];
+            let (modes, labels): (&[Mode], &[&str]) = if ring_on {
+                (
+                    &[Mode::Cool, Mode::Warm, Mode::Balanced, Mode::Ambient, Mode::Rainbow],
+                    &["Frio", "Quente", "Neutro", "Cor", "Arco-íris"],
+                )
+            } else {
+                (&[Mode::Cool, Mode::Warm, Mode::Balanced], &["Frio", "Quente", "Neutro"])
+            };
             let sel = st.mode.and_then(|m| modes.iter().position(|x| *x == m));
-            if let Some(i) = segmented(ui, &["Frio", "Quente", "Neutro", "Cor", "Arco-íris"], sel) {
+            if let Some(i) = segmented(ui, labels, sel) {
                 self.send(Cmd::Mode(modes[i]));
+            }
+            if !ring_on {
+                ui.label(RichText::new("Ligue o anel RGB para escolher cores e o arco-íris.").small().color(MUTED));
             }
         });
 
+        if ring_on {
+            self.color_card(ui, &st);
+        }
+
+        card(ui, "Brilho", |ui| {
+            if slider_row(ui, "Intensidade", &mut self.brightness, 0..=100, 1, true, " %") {
+                self.brightness_edited = Some(Instant::now());
+                self.send(Cmd::Brightness(self.brightness as u8));
+            }
+        });
+    }
+
+    fn color_card(&mut self, ui: &mut egui::Ui, st: &emeetctl_core::LightStatus) {
         card(ui, "Cor do anel", |ui| {
             let fixed = st.mode == Some(Mode::Ambient);
             ui.horizontal_wrapped(|ui| {
@@ -302,12 +327,6 @@ impl App {
             }
         });
 
-        card(ui, "Brilho", |ui| {
-            if slider_row(ui, "Intensidade", &mut self.brightness, 0..=100, 1, true, " %") {
-                self.brightness_edited = Some(Instant::now());
-                self.send(Cmd::Brightness(self.brightness as u8));
-            }
-        });
     }
 
     fn image_tab(&mut self, ui: &mut egui::Ui) {
