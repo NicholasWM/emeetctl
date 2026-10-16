@@ -105,7 +105,7 @@ impl App {
             brightness_edited: None,
             ctrl_values: HashMap::new(),
             ctrl_edited: HashMap::new(),
-            preview_on: true,
+            preview_on: !std::env::args().any(|a| a == "--no-preview"),
             preview: None,
             texture: None,
             preview_format: None,
