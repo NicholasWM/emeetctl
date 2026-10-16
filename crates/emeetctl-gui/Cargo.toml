@@ -14,3 +14,26 @@ emeetctl-core.workspace = true
 eframe.workspace = true
 v4l = "0.14"
 zune-jpeg = "0.4"
+
+[package.metadata.deb]
+name = "emeetctl"
+maintainer = "Nicholas Mazzei <NicholasWM@users.noreply.github.com>"
+copyright = "2026, Nicholas Mazzei"
+license-file = ["../../LICENSE-MIT", "0"]
+extended-description = """\
+Linux control for the EMEET SmartCam S600L webcam: ring light (RGB and fill light), \
+image controls (focus, zoom, exposure, white balance) and live preview. \
+Ships the GUI (emeetctl-gui), the CLI (emeetctl) and an MCP server (emeetctl-mcp). \
+Not affiliated with EMEET."""
+section = "video"
+priority = "optional"
+depends = "$auto"
+maintainer-scripts = "../../packaging/debian/"
+assets = [
+    ["target/release/emeetctl-gui", "usr/bin/", "755"],
+    ["target/release/emeetctl", "usr/bin/", "755"],
+    ["target/release/emeetctl-mcp", "usr/bin/", "755"],
+    ["../../udev/70-emeetctl.rules", "usr/lib/udev/rules.d/", "644"],
+    ["../../emeetctl.desktop", "usr/share/applications/", "644"],
+    ["../../README.md", "usr/share/doc/emeetctl/", "644"],
+]
