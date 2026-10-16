@@ -601,7 +601,11 @@ fn main() -> eframe::Result {
             .with_title("emeetctl")
             .with_app_id("emeetctl")
             .with_inner_size([1180.0, 720.0])
-            .with_min_inner_size([420.0, 560.0]),
+            .with_min_inner_size([420.0, 560.0])
+            .with_icon(
+                eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icons/hicolor/256x256/apps/emeetctl.png"))
+                    .expect("ícone embutido é um PNG válido"),
+            ),
         ..Default::default()
     };
     eframe::run_native("emeetctl", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
