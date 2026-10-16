@@ -1,0 +1,3 @@
+# emeetctl: acesso do usuário logado ao canal HID da EMEET SmartCam S600L (controle da luz).
+# O vídeo (/dev/videoN) já é acessível pelo grupo video / uaccess.
+KERNEL=="hidraw*", ATTRS{idVendor}=="328f", ATTRS{idProduct}=="00ef", MODE="0660", TAG+="uaccess"

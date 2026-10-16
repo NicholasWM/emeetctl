@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=emeetctl
+Comment=Luz e imagem da webcam EMEET SmartCam S600L
+Exec=emeetctl-gui
+Icon=camera-web
+Categories=AudioVideo;Video;Settings;
+Terminal=false
