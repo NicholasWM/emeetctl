@@ -120,12 +120,13 @@ fn run(cli: Cli) -> R {
                 return Ok(());
             }
             println!(
-                "produto:  {}\nserial:   {}\nfirmware: {}\nhidraw:   {}\nvideo:    {}",
+                "produto:  {}\nserial:   {}\nfirmware: {}\nhidraw:   {}\nvideo:    {}\nem uso:   {}",
                 info.product,
                 info.serial,
                 info.firmware,
                 opt(info.hidraw),
-                opt(info.video)
+                opt(info.video),
+                emeetctl_core::describe_users(&info.in_use_by).unwrap_or_else(|| "ninguém".into())
             );
         }
         Cmd::Status => {

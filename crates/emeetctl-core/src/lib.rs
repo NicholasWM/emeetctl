@@ -5,10 +5,12 @@
 
 pub mod device;
 pub mod light;
+pub mod usage;
 pub mod video;
 
 pub use device::{find, DeviceInfo, DevicePaths};
 pub use light::{Light, LightStatus, Mode, Target};
+pub use usage::{camera_users, describe as describe_users, CameraUser};
 pub use video::{Control, ControlKind, Video};
 
 #[derive(Debug)]

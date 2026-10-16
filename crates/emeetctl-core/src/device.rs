@@ -22,6 +22,8 @@ pub struct DeviceInfo {
     pub firmware: String,
     pub hidraw: Option<String>,
     pub video: Option<String>,
+    /// Outros programas com a câmera aberta agora (ex.: Google Chrome no Meet).
+    pub in_use_by: Vec<crate::CameraUser>,
 }
 
 /// Procura a S600L. Falha só se nenhum dos dois nós (hidraw, video) existir.
@@ -60,6 +62,11 @@ impl DevicePaths {
             },
             hidraw: self.hidraw.as_ref().map(|p| p.display().to_string()),
             video: self.video.as_ref().map(|p| p.display().to_string()),
+            in_use_by: self
+                .video
+                .as_deref()
+                .map(crate::camera_users)
+                .unwrap_or_default(),
         }
     }
 }

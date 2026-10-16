@@ -11,7 +11,7 @@ fn tools() -> Value {
     json!([
         {
             "name": "get_status",
-            "description": "Lê o estado da câmera EMEET S600L: dados do dispositivo (produto, serial, firmware) e da luz (fill light e anel RGB ligados, modo, cor, brilho).",
+            "description": "Lê o estado da câmera EMEET S600L: dados do dispositivo (produto, serial, firmware, programas usando a câmera agora em in_use_by) e da luz (fill light e anel RGB ligados, modo, cor, brilho).",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {

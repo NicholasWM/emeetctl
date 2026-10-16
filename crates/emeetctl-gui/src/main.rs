@@ -206,6 +206,12 @@ impl App {
 
     // ---------- prévia ----------
 
+    /// Outros programas com a câmera aberta, segundo a última leitura do worker.
+    fn in_use_by(&self) -> Option<String> {
+        let info = self.snap.as_ref()?.info.as_ref()?;
+        emeetctl_core::describe_users(&info.in_use_by)
+    }
+
     fn sync_preview(&mut self, ctx: &egui::Context) {
         let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
         if focused && !self.focused {
@@ -270,10 +276,16 @@ impl App {
             }
             _ => {
                 let (msg, color) = match (&self.preview_error, self.preview_on, self.focused) {
-                    (Some(e), _, _) => (format!("Sem prévia: {e}"), WARN),
+                    (Some(e), _, _) => match self.in_use_by() {
+                        Some(who) => (format!("A câmera está em uso por {who}"), WARN),
+                        None => (format!("Sem prévia: {e}"), WARN),
+                    },
                     (None, false, _) => ("Prévia pausada".to_string(), MUTED),
                     (None, true, false) => (
-                        "Câmera liberada para outros apps enquanto o emeetctl está em segundo plano".to_string(),
+                        match self.in_use_by() {
+                            Some(who) => format!("Câmera liberada para outros apps · em uso por {who}"),
+                            None => "Câmera liberada para outros apps enquanto o emeetctl está em segundo plano".to_string(),
+                        },
                         MUTED,
                     ),
                     (None, true, true) => ("Abrindo a câmera…".to_string(), MUTED),
@@ -596,6 +608,11 @@ impl App {
                         ("Firmware", info.firmware),
                         ("Canal da luz", info.hidraw.unwrap_or("—".into())),
                         ("Vídeo", info.video.unwrap_or("—".into())),
+                        (
+                            "Em uso por",
+                            emeetctl_core::describe_users(&info.in_use_by)
+                                .unwrap_or("ninguém".into()),
+                        ),
                     ] {
                         ui.label(RichText::new(k).color(MUTED));
                         ui.label(RichText::new(v).monospace());
