@@ -110,6 +110,10 @@ struct App {
     texture: Option<egui::TextureHandle>,
     preview_format: Option<String>,
     preview_error: Option<String>,
+    /// A prévia só segura a câmera com a janela em foco: em segundo plano ela é
+    /// liberada, para o Meet/Zoom conseguirem abrir (no Linux só um programa
+    /// lê o stream da webcam por vez).
+    focused: bool,
     last_error: Option<(String, Instant)>,
 }
 
@@ -138,6 +142,7 @@ impl App {
             texture: None,
             preview_format: None,
             preview_error: None,
+            focused: true,
             last_error: None,
         }
     }
@@ -202,12 +207,19 @@ impl App {
     // ---------- prévia ----------
 
     fn sync_preview(&mut self, ctx: &egui::Context) {
+        let focused = ctx.input(|i| i.viewport().focused.unwrap_or(true));
+        if focused && !self.focused {
+            // Voltou para a janela: tenta de novo, mesmo que antes estivesse ocupada.
+            self.preview_error = None;
+        }
+        self.focused = focused;
+        let wanted = self.preview_on && focused;
         let video = self
             .snap
             .as_ref()
             .and_then(|s| s.info.as_ref())
             .and_then(|i| i.video.clone());
-        match (self.preview_on, video, self.preview.is_some()) {
+        match (wanted, video, self.preview.is_some()) {
             (true, Some(path), false) if self.preview_error.is_none() => {
                 self.preview = Some(preview::Preview::start(path.into(), ctx.clone()))
             }
@@ -247,7 +259,7 @@ impl App {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 14.0, Color32::BLACK);
 
-        match (&self.texture, self.preview_on) {
+        match (&self.texture, self.preview_on && self.focused) {
             (Some(t), true) => {
                 egui::Image::new(t).corner_radius(14.0).paint_at(ui, rect);
                 theme::chip(ui, rect.min + egui::vec2(12.0, 12.0), "AO VIVO", Some(LIVE));
@@ -257,10 +269,14 @@ impl App {
                 }
             }
             _ => {
-                let (msg, color) = match (&self.preview_error, self.preview_on) {
-                    (Some(e), _) => (format!("Sem prévia: {e}"), WARN),
-                    (None, false) => ("Prévia pausada".to_string(), MUTED),
-                    (None, true) => ("Abrindo a câmera…".to_string(), MUTED),
+                let (msg, color) = match (&self.preview_error, self.preview_on, self.focused) {
+                    (Some(e), _, _) => (format!("Sem prévia: {e}"), WARN),
+                    (None, false, _) => ("Prévia pausada".to_string(), MUTED),
+                    (None, true, false) => (
+                        "Câmera liberada para outros apps enquanto o emeetctl está em segundo plano".to_string(),
+                        MUTED,
+                    ),
+                    (None, true, true) => ("Abrindo a câmera…".to_string(), MUTED),
                 };
                 painter.text(
                     rect.center(),
