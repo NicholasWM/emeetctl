@@ -23,17 +23,21 @@ license-file = ["../../LICENSE-MIT", "0"]
 extended-description = """\
 Linux control for the EMEET SmartCam S600L webcam: ring light (RGB and fill light), \
 image controls (focus, zoom, exposure, white balance) and live preview. \
-Ships the GUI (emeetctl-gui), the CLI (emeetctl) and an MCP server (emeetctl-mcp). \
+Ships the GUI (emeetctl-gui), the CLI (emeetctl), an MCP server (emeetctl-mcp) \
+and an optional virtual camera service that lets several apps use the webcam at once \
+(needs v4l2loopback-dkms). \
 Not affiliated with EMEET."""
 section = "video"
 priority = "optional"
 depends = "$auto"
+recommends = "v4l2loopback-dkms"
 maintainer-scripts = "../../packaging/debian/"
 assets = [
     ["target/release/emeetctl-gui", "usr/bin/", "755"],
     ["target/release/emeetctl", "usr/bin/", "755"],
     ["target/release/emeetctl-mcp", "usr/bin/", "755"],
     ["../../udev/70-emeetctl.rules", "usr/lib/udev/rules.d/", "644"],
+    ["../../packaging/systemd/emeetctl-virtualcam.service", "usr/lib/systemd/user/", "644"],
     ["../../emeetctl.desktop", "usr/share/applications/", "644"],
     ["../../README.md", "usr/share/doc/emeetctl/", "644"],
     ["../../assets/icons/hicolor/16x16/apps/emeetctl.png", "usr/share/icons/hicolor/16x16/apps/", "644"],

@@ -1,0 +1,13 @@
+[Unit]
+Description=emeetctl virtual camera (EMEET S600L -> "emeetctl Camera")
+Documentation=https://nicholaswm.github.io/emeetctl/
+# Tenta de novo para sempre: a câmera pode estar ocupada (EBUSY) ou desconectada.
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/emeetctl virtualcam
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
