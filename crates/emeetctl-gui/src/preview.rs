@@ -13,14 +13,18 @@ use v4l::io::traits::CaptureStream;
 use v4l::video::Capture;
 use v4l::{Device, FourCC};
 
-const WIDTH: u32 = 640;
-const HEIGHT: u32 = 480;
+// MJPEG 720p: no YUYV (e em 1080p/4K) a câmera ignora o zoom, então a prévia
+// mostraria um zoom diferente do que os outros apps recebem.
+const WIDTH: u32 = 1280;
+const HEIGHT: u32 = 720;
 
 #[derive(Default)]
 pub struct Shared {
     pub frame: Option<ColorImage>,
     pub error: Option<String>,
     pub format: Option<String>,
+    /// Quadros por segundo efetivos (captura + decodificação), média de ~1 s.
+    pub fps: f32,
 }
 
 pub struct Preview {
@@ -65,15 +69,18 @@ fn capture(path: &PathBuf, stop: &AtomicBool, shared: &Mutex<Shared>, ctx: &egui
     let mut fmt = dev.format()?;
     fmt.width = WIDTH;
     fmt.height = HEIGHT;
-    fmt.fourcc = FourCC::new(b"YUYV");
+    fmt.fourcc = FourCC::new(b"MJPG");
     let mut fmt = dev.set_format(&fmt)?;
-    if &fmt.fourcc.repr != b"YUYV" {
-        fmt.fourcc = FourCC::new(b"MJPG");
+    if &fmt.fourcc.repr != b"MJPG" {
+        fmt.width = 640;
+        fmt.height = 480;
+        fmt.fourcc = FourCC::new(b"YUYV");
         fmt = dev.set_format(&fmt)?;
     }
     shared.lock().unwrap().format = Some(format!("{} {}×{}", fmt.fourcc, fmt.width, fmt.height));
 
     let mut stream = Stream::with_buffers(&dev, Type::VideoCapture, 4)?;
+    let (mut count, mut since) = (0u32, std::time::Instant::now());
     while !stop.load(Ordering::Relaxed) {
         let (buf, meta) = stream.next()?;
         let data = &buf[..(meta.bytesused as usize).min(buf.len())];
@@ -82,7 +89,12 @@ fn capture(path: &PathBuf, stop: &AtomicBool, shared: &Mutex<Shared>, ctx: &egui
             _ => mjpeg_to_image(data),
         };
         if let Some(img) = image {
+            count += 1;
             let mut s = shared.lock().unwrap();
+            if since.elapsed().as_secs_f32() >= 1.0 {
+                s.fps = count as f32 / since.elapsed().as_secs_f32();
+                (count, since) = (0, std::time::Instant::now());
+            }
             s.frame = Some(img);
             s.error = None;
             drop(s);
