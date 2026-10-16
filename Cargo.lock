@@ -1092,6 +1092,8 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "serde",
+ "v4l",
+ "zune-jpeg 0.4.21",
 ]
 
 [[package]]

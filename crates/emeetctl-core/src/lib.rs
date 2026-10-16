@@ -7,6 +7,7 @@ pub mod device;
 pub mod light;
 pub mod usage;
 pub mod video;
+pub mod virtualcam;
 
 pub use device::{find, DeviceInfo, DevicePaths};
 pub use light::{Light, LightStatus, Mode, Target};

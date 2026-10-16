@@ -8,3 +8,5 @@ license.workspace = true
 [dependencies]
 libc.workspace = true
 serde.workspace = true
+v4l.workspace = true
+zune-jpeg.workspace = true
