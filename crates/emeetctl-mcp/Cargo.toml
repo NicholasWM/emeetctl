@@ -1,0 +1,10 @@
+[package]
+name = "emeetctl-mcp"
+description = "Servidor MCP (stdio) do emeetctl: deixa um agente de IA controlar a luz e a imagem da S600L"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+emeetctl-core.workspace = true
+serde_json.workspace = true
