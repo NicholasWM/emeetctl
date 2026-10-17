@@ -20,6 +20,7 @@ The vendor app (EMEET Studio) only exists for Windows and macOS. The light proto
 | Light brightness | ✔ | `emeetctl brightness 40` | `set_light_brightness` |
 | Image: brightness, contrast, saturation, hue, gamma, gain, sharpness, white balance, exposure, focus, zoom, anti-flicker, backlight | ✔ | `emeetctl image list/get/set/reset` | `list_image_controls`, `set_image_control`, `reset_image_controls` |
 | Microphones (camera mic, Yeti Nano, any USB mic): gain, mute, live level meter, make it the default input, who is recording from it | ✔ | `emeetctl mic [-d nano] list/status/gain/mute/unmute/default/level` | `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default` |
+| Clean microphone: a new input "<mic> (limpo)" with WebRTC noise suppression, high-pass and speaker echo cancellation, as a user service (no PipeWire restart) | ✔ | `emeetctl mic -d nano clean on --default` / `off` | `set_clean_mic` |
 | Headphone output of the mic (Yeti Nano): volume, mute | ✔ | `emeetctl mic -d nano headphones -12` | `set_headphones` |
 | Live camera preview (MJPEG 1280×720, YUYV fallback; released when paused) | ✔ | | |
 | Device info (serial, firmware) | ✔ | `emeetctl info` | `get_status` |
@@ -76,7 +77,7 @@ emeetctl --json status             # machine-readable output
 claude mcp add emeetctl -- emeetctl-mcp
 ```
 
-Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`, `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default`, `set_headphones` (mic tools take an optional `device`). Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
+Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`, `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default`, `set_headphones`, `set_clean_mic` (mic tools take an optional `device`). Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
 
 ## Protocol
 
