@@ -737,6 +737,42 @@ impl App {
                 }
             });
         }
+        let cs = self.snap.as_ref().map(|s| s.clean.clone());
+        if let Some(cs) = cs {
+            card(ui, "Microfone limpo", |ui| {
+                let here = cs.source.is_some() && cs.source == st.pipewire_node;
+                let mut on = cs.active && here;
+                let hint = if cs.active && !here {
+                    "Ligado em outro microfone: ligar aqui troca".to_string()
+                } else {
+                    format!(
+                        "Entrada nova \"{} (limpo)\": ruído, grave e eco do alto-falante tratados pelo WebRTC",
+                        st.device.short()
+                    )
+                };
+                if switch_row(ui, "Redução de ruído e eco", Some(&hint), &mut on) {
+                    self.send(Cmd::Clean(on));
+                }
+                if cs.active && here {
+                    ui.add_space(4.0);
+                    if cs.default {
+                        ui.label(
+                            RichText::new("Os apps usam a entrada limpa (é a padrão).")
+                                .small()
+                                .color(MUTED),
+                        );
+                    } else if ui
+                        .add(
+                            egui::Button::new("Usar a entrada limpa como padrão")
+                                .min_size(egui::vec2(ui.available_width(), 34.0)),
+                        )
+                        .clicked()
+                    {
+                        self.send(Cmd::CleanDefault);
+                    }
+                }
+            });
+        }
         card(ui, "Sistema", |ui| {
             egui::Grid::new("mic-sys")
                 .num_columns(2)

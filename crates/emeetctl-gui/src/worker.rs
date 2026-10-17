@@ -3,6 +3,7 @@
 //! são agrupados e só o último valor vai para a câmera.
 
 use eframe::egui;
+use emeetctl_core::mic::clean::{self, CleanStatus};
 use emeetctl_core::mic::MicDevice;
 use emeetctl_core::{Control, DeviceInfo, Light, LightStatus, Mic, MicStatus, Mode, Target, Video};
 use std::collections::HashMap;
@@ -26,6 +27,10 @@ pub enum Cmd {
     MicOn(bool),
     /// Microfone selecionado como entrada padrão do sistema.
     MicDefault,
+    /// Liga o microfone limpo no microfone selecionado, ou desliga.
+    Clean(bool),
+    /// Entrada limpa como padrão do sistema.
+    CleanDefault,
     /// Volume do fone ligado ao microfone, em dB.
     Headphones(f32),
     HeadphonesOn(bool),
@@ -97,6 +102,7 @@ pub struct Snapshot {
     pub virtualcam: VirtualCam,
     /// Microfones USB conectados.
     pub mics: Vec<MicDevice>,
+    pub clean: CleanStatus,
     pub mic: Result<MicStatus, String>,
 }
 
@@ -147,76 +153,80 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
             Mic::find(card.map(|c| c.to_string()).as_deref()).map_err(|e| e.to_string())
         };
         for cmd in batch {
-            let r: Result<(), String> = match cmd {
-                Cmd::Refresh => Ok(()),
-                Cmd::Power(t, on) => open_light(&mut light).and_then(|_| {
-                    light
-                        .as_mut()
-                        .unwrap()
-                        .set_power(t, on)
-                        .map_err(|e| e.to_string())
-                }),
-                Cmd::Mode(m) => open_light(&mut light).and_then(|_| {
-                    light
-                        .as_mut()
-                        .unwrap()
-                        .set_mode(m)
-                        .map_err(|e| e.to_string())
-                }),
-                Cmd::Color(c) => open_light(&mut light).and_then(|_| {
-                    light
-                        .as_mut()
-                        .unwrap()
-                        .set_color(c)
-                        .map_err(|e| e.to_string())
-                }),
-                Cmd::Brightness(p) => open_light(&mut light).and_then(|_| {
-                    light
-                        .as_mut()
-                        .unwrap()
-                        .set_brightness_percent(p)
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
-                }),
-                Cmd::Ctrl(id, v) => open_video(&mut video).and_then(|_| {
-                    video
-                        .as_ref()
-                        .unwrap()
-                        .set(id, v)
-                        .map_err(|e| e.to_string())
-                }),
-                Cmd::MicSelect(card) => {
-                    mic_card = Some(card);
-                    Ok(())
-                }
-                Cmd::MicGain(db) => mic(mic_card)
-                    .and_then(|m| m.set_gain(db).map(|_| ()).map_err(|e| e.to_string())),
-                Cmd::MicOn(on) => {
-                    mic(mic_card).and_then(|m| m.set_on(on).map_err(|e| e.to_string()))
-                }
-                Cmd::MicDefault => {
-                    mic(mic_card).and_then(|m| m.make_default().map_err(|e| e.to_string()))
-                }
-                Cmd::Headphones(db) => mic(mic_card)
-                    .and_then(|m| m.set_headphones(db).map(|_| ()).map_err(|e| e.to_string())),
-                Cmd::HeadphonesOn(on) => {
-                    mic(mic_card).and_then(|m| m.set_headphones_on(on).map_err(|e| e.to_string()))
-                }
-                Cmd::VirtualCam(on) => {
-                    systemctl(&[if on { "start" } else { "stop" }, UNIT]).map(|_| ())
-                }
-                Cmd::VirtualCamAutostart(on) => {
-                    systemctl(&[if on { "enable" } else { "disable" }, UNIT]).map(|_| ())
-                }
-                Cmd::ResetCtrls => open_video(&mut video).and_then(|_| {
-                    video
-                        .as_ref()
-                        .unwrap()
-                        .reset_defaults()
-                        .map(|_| ())
-                        .map_err(|e| e.to_string())
-                }),
-            };
+            let r: Result<(), String> =
+                match cmd {
+                    Cmd::Refresh => Ok(()),
+                    Cmd::Power(t, on) => open_light(&mut light).and_then(|_| {
+                        light
+                            .as_mut()
+                            .unwrap()
+                            .set_power(t, on)
+                            .map_err(|e| e.to_string())
+                    }),
+                    Cmd::Mode(m) => open_light(&mut light).and_then(|_| {
+                        light
+                            .as_mut()
+                            .unwrap()
+                            .set_mode(m)
+                            .map_err(|e| e.to_string())
+                    }),
+                    Cmd::Color(c) => open_light(&mut light).and_then(|_| {
+                        light
+                            .as_mut()
+                            .unwrap()
+                            .set_color(c)
+                            .map_err(|e| e.to_string())
+                    }),
+                    Cmd::Brightness(p) => open_light(&mut light).and_then(|_| {
+                        light
+                            .as_mut()
+                            .unwrap()
+                            .set_brightness_percent(p)
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    }),
+                    Cmd::Ctrl(id, v) => open_video(&mut video).and_then(|_| {
+                        video
+                            .as_ref()
+                            .unwrap()
+                            .set(id, v)
+                            .map_err(|e| e.to_string())
+                    }),
+                    Cmd::MicSelect(card) => {
+                        mic_card = Some(card);
+                        Ok(())
+                    }
+                    Cmd::MicGain(db) => mic(mic_card)
+                        .and_then(|m| m.set_gain(db).map(|_| ()).map_err(|e| e.to_string())),
+                    Cmd::MicOn(on) => {
+                        mic(mic_card).and_then(|m| m.set_on(on).map_err(|e| e.to_string()))
+                    }
+                    Cmd::MicDefault => {
+                        mic(mic_card).and_then(|m| m.make_default().map_err(|e| e.to_string()))
+                    }
+                    Cmd::Clean(true) => mic(mic_card)
+                        .and_then(|m| clean::enable(m.device()).map_err(|e| e.to_string())),
+                    Cmd::Clean(false) => clean::disable().map_err(|e| e.to_string()),
+                    Cmd::CleanDefault => clean::make_default().map_err(|e| e.to_string()),
+                    Cmd::Headphones(db) => mic(mic_card)
+                        .and_then(|m| m.set_headphones(db).map(|_| ()).map_err(|e| e.to_string())),
+                    Cmd::HeadphonesOn(on) => mic(mic_card)
+                        .and_then(|m| m.set_headphones_on(on).map_err(|e| e.to_string())),
+                    Cmd::VirtualCam(on) => {
+                        systemctl(&[if on { "start" } else { "stop" }, UNIT]).map(|_| ())
+                    }
+                    Cmd::VirtualCamAutostart(on) => {
+                        systemctl(&[if on { "enable" } else { "disable" }, UNIT]).map(|_| ())
+                    }
+                    Cmd::ResetCtrls => open_video(&mut video).and_then(|_| {
+                        video
+                            .as_ref()
+                            .unwrap()
+                            .reset_defaults()
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    }),
+                };
             if let Err(e) = r {
                 error = Some(e);
                 // Handle pode ter morrido (desconectou): reabre na próxima.
@@ -248,6 +258,7 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
                 error,
                 virtualcam: virtualcam_state(),
                 mics: emeetctl_core::mic::list(),
+                clean: clean::status(),
                 mic: mic(mic_card).and_then(|m| m.status().map_err(|e| e.to_string())),
             })
             .is_err()
