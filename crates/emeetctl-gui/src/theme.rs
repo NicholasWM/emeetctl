@@ -192,6 +192,29 @@ pub fn slider_row(
     .inner
 }
 
+/// Linha com rótulo e slider em dB, com passo fracionário (ex.: 0,5 dB).
+pub fn slider_db(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    step: f32,
+    enabled: bool,
+) -> bool {
+    ui.label(RichText::new(label).color(if enabled { TEXT } else { MUTED }));
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.spacing_mut().slider_width = (ui.available_width() - 96.0).max(80.0);
+        ui.add(
+            egui::Slider::new(value, range)
+                .step_by(step as f64)
+                .fixed_decimals(1)
+                .suffix(" dB"),
+        )
+        .changed()
+    })
+    .inner
+}
+
 pub fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))

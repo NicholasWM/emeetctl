@@ -3,6 +3,7 @@
 //! são agrupados e só o último valor vai para a câmera.
 
 use eframe::egui;
+use emeetctl_core::mic::MicDevice;
 use emeetctl_core::{Control, DeviceInfo, Light, LightStatus, Mic, MicStatus, Mode, Target, Video};
 use std::collections::HashMap;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -18,11 +19,16 @@ pub enum Cmd {
     Brightness(u8),
     Ctrl(u32, i32),
     ResetCtrls,
+    /// Troca o microfone mostrado na aba Microfone (número da placa).
+    MicSelect(u32),
     /// Ganho do microfone em dB.
     MicGain(f32),
     MicOn(bool),
-    /// Microfone da câmera como entrada padrão do sistema.
+    /// Microfone selecionado como entrada padrão do sistema.
     MicDefault,
+    /// Volume do fone ligado ao microfone, em dB.
+    Headphones(f32),
+    HeadphonesOn(bool),
     /// Liga/desliga o serviço da câmera virtual (`systemctl --user start|stop`).
     VirtualCam(bool),
     /// Inicia a câmera virtual junto com a sessão (`systemctl --user enable|disable`).
@@ -89,12 +95,16 @@ pub struct Snapshot {
     pub controls: Result<Vec<Control>, String>,
     pub error: Option<String>,
     pub virtualcam: VirtualCam,
+    /// Microfones USB conectados.
+    pub mics: Vec<MicDevice>,
     pub mic: Result<MicStatus, String>,
 }
 
 pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
     let mut light: Option<Light> = None;
     let mut video: Option<Video> = None;
+    // Microfone escolhido na aba; até lá, a entrada padrão do sistema.
+    let mut mic_card: Option<u32> = None;
     loop {
         let first = match rx.recv_timeout(POLL) {
             Ok(c) => c,
@@ -133,6 +143,9 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
         };
 
         let mut error = None;
+        let mic = |card: Option<u32>| -> Result<Mic, String> {
+            Mic::find(card.map(|c| c.to_string()).as_deref()).map_err(|e| e.to_string())
+        };
         for cmd in batch {
             let r: Result<(), String> = match cmd {
                 Cmd::Refresh => Ok(()),
@@ -172,11 +185,23 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
                         .set(id, v)
                         .map_err(|e| e.to_string())
                 }),
-                Cmd::MicGain(db) => {
-                    mic().and_then(|m| m.set_gain(db).map(|_| ()).map_err(|e| e.to_string()))
+                Cmd::MicSelect(card) => {
+                    mic_card = Some(card);
+                    Ok(())
                 }
-                Cmd::MicOn(on) => mic().and_then(|m| m.set_on(on).map_err(|e| e.to_string())),
-                Cmd::MicDefault => mic().and_then(|m| m.make_default().map_err(|e| e.to_string())),
+                Cmd::MicGain(db) => mic(mic_card)
+                    .and_then(|m| m.set_gain(db).map(|_| ()).map_err(|e| e.to_string())),
+                Cmd::MicOn(on) => {
+                    mic(mic_card).and_then(|m| m.set_on(on).map_err(|e| e.to_string()))
+                }
+                Cmd::MicDefault => {
+                    mic(mic_card).and_then(|m| m.make_default().map_err(|e| e.to_string()))
+                }
+                Cmd::Headphones(db) => mic(mic_card)
+                    .and_then(|m| m.set_headphones(db).map(|_| ()).map_err(|e| e.to_string())),
+                Cmd::HeadphonesOn(on) => {
+                    mic(mic_card).and_then(|m| m.set_headphones_on(on).map_err(|e| e.to_string()))
+                }
                 Cmd::VirtualCam(on) => {
                     systemctl(&[if on { "start" } else { "stop" }, UNIT]).map(|_| ())
                 }
@@ -222,7 +247,8 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
                 controls,
                 error,
                 virtualcam: virtualcam_state(),
-                mic: mic().and_then(|m| m.status().map_err(|e| e.to_string())),
+                mics: emeetctl_core::mic::list(),
+                mic: mic(mic_card).and_then(|m| m.status().map_err(|e| e.to_string())),
             })
             .is_err()
         {
@@ -232,15 +258,11 @@ pub fn worker(rx: Receiver<Cmd>, tx: Sender<Snapshot>, ctx: egui::Context) {
     }
 }
 
-/// O mixer é barato de abrir: abre a cada uso, e a câmera pode sair e voltar.
-fn mic() -> Result<Mic, String> {
-    Mic::open().map_err(|e| e.to_string())
-}
-
 /// Mantém a ordem, mas descarta ganhos, brilhos e valores de controle superados por um mais novo.
 fn coalesce(cmds: Vec<Cmd>) -> Vec<Cmd> {
     let last_brightness = cmds.iter().rposition(|c| matches!(c, Cmd::Brightness(_)));
     let last_gain = cmds.iter().rposition(|c| matches!(c, Cmd::MicGain(_)));
+    let last_phones = cmds.iter().rposition(|c| matches!(c, Cmd::Headphones(_)));
     let mut last_ctrl: HashMap<u32, usize> = HashMap::new();
     for (i, c) in cmds.iter().enumerate() {
         if let Cmd::Ctrl(id, _) = c {
@@ -252,6 +274,7 @@ fn coalesce(cmds: Vec<Cmd>) -> Vec<Cmd> {
         .filter(|(i, c)| match c {
             Cmd::Brightness(_) => Some(*i) == last_brightness,
             Cmd::MicGain(_) => Some(*i) == last_gain,
+            Cmd::Headphones(_) => Some(*i) == last_phones,
             Cmd::Ctrl(id, _) => last_ctrl.get(id) == Some(i),
             _ => true,
         })
