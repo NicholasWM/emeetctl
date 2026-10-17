@@ -1,20 +1,21 @@
-//! Microfone embutido da S600L: no Linux ele é uma placa de som USB à parte
-//! (Audio Class), com ganho e mudo no mixer ALSA. O PipeWire diz se ele é a
-//! entrada padrão e quais programas estão gravando dele.
+//! Microfones USB: o embutido da S600L e qualquer outro (ex.: Yeti Nano). No
+//! Linux cada um é uma placa de som USB (Audio Class), com ganho e mudo no
+//! mixer ALSA; o PipeWire diz qual é a entrada padrão e quem está gravando.
 //!
 //! Só usa os controles padrão de áudio USB (Feature Unit): nenhum comando do
 //! fabricante passa por aqui.
 
-use crate::device::{usb_parent, PID, VID};
+mod device;
+
+pub use device::{camera, find, list, MicDevice, Model};
+
 use crate::{Error, Result};
 use alsa::mixer::{MilliBel, Selem, SelemChannelId, SelemId};
 use alsa::Round;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeSet;
-use std::fs;
 use std::io::Read;
-use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
@@ -24,18 +25,32 @@ pub const METER_NODE: &str = "emeetctl-meter";
 /// Piso do medidor: abaixo disso é silêncio.
 pub const FLOOR_DB: f32 = -60.0;
 const WINDOW: usize = 48_000 / 20; // 50 ms a 48 kHz
+/// Janelas seguidas de zeros absolutos que contam como "silêncio digital" (~1 s).
+const ZERO_WINDOWS: u32 = 20;
 const CH: SelemChannelId = SelemChannelId::FrontLeft; // == mono
+
+/// Volume e mudo de uma saída de fone no próprio microfone (ex.: Yeti Nano).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Level {
+    pub db: f32,
+    pub min_db: f32,
+    pub max_db: f32,
+    /// `false` = mudo.
+    pub on: bool,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MicStatus {
-    /// Placa ALSA (`hw:N`).
-    pub card: u32,
-    /// Ganho em dB, e a faixa que a câmera declara.
+    #[serde(flatten)]
+    pub device: MicDevice,
+    /// Ganho em dB, e a faixa que o microfone declara.
     pub gain_db: f32,
     pub min_db: f32,
     pub max_db: f32,
     /// `false` = mudo.
     pub on: bool,
+    /// Saída de fone, se o microfone tiver uma.
+    pub headphones: Option<Level>,
     /// Entrada padrão do sistema no PipeWire.
     pub default: bool,
     /// Programas gravando do microfone agora.
@@ -55,87 +70,103 @@ impl MicStatus {
     }
 }
 
-/// Placa ALSA da S600L, achada pelo VID:PID do pai USB.
-pub fn find_card() -> Result<u32> {
-    let mut cards: Vec<u32> = fs::read_dir("/sys/class/sound")?
-        .flatten()
-        .filter_map(|e| e.file_name().to_str()?.strip_prefix("card")?.parse().ok())
-        .collect();
-    cards.sort();
-    cards
-        .into_iter()
-        .find(|c| {
-            let dev = Path::new("/sys/class/sound")
-                .join(format!("card{c}"))
-                .join("device");
-            Path::new(&format!("/proc/asound/card{c}/pcm0c")).exists()
-                && usb_parent(&dev).is_some_and(|u| {
-                    read_hex(&u.join("idVendor")) == Some(VID)
-                        && read_hex(&u.join("idProduct")) == Some(PID)
-                })
-        })
-        .ok_or(Error::NotFound("microfone 328f:00ef"))
-}
-
-fn read_hex(p: &Path) -> Option<u16> {
-    u16::from_str_radix(fs::read_to_string(p).ok()?.trim(), 16).ok()
-}
-
 fn alsa_err(e: alsa::Error) -> Error {
     Error::Invalid(format!("ALSA: {e}"))
 }
 
 pub struct Mic {
-    card: u32,
+    device: MicDevice,
     mixer: alsa::mixer::Mixer,
-    control: String,
+    capture: String,
+    playback: Option<String>,
 }
 
 impl Mic {
+    /// O microfone embutido da câmera.
     pub fn open() -> Result<Mic> {
-        Self::open_card(find_card()?)
+        Self::open_device(camera()?)
     }
 
-    pub fn open_card(card: u32) -> Result<Mic> {
-        let mixer = alsa::mixer::Mixer::new(&format!("hw:{card}"), false).map_err(alsa_err)?;
-        let mut control = None;
+    /// Microfone escolhido por `sel` (placa, apelido "nano"/"s600l", vid:pid ou
+    /// trecho do nome); sem seleção, a entrada padrão do sistema.
+    pub fn find(sel: Option<&str>) -> Result<Mic> {
+        Self::open_device(find(sel)?)
+    }
+
+    pub fn open_device(device: MicDevice) -> Result<Mic> {
+        let mixer =
+            alsa::mixer::Mixer::new(&format!("hw:{}", device.card), false).map_err(alsa_err)?;
+        let mut capture = None;
+        let mut playback = None;
         for elem in mixer.iter() {
             let Some(s) = Selem::new(elem) else { continue };
             let Ok(name) = s.get_id().get_name().map(str::to_string) else {
                 continue;
             };
             // Preferir o controle chamado "Mic"; senão, o primeiro com volume.
-            if s.has_capture_volume() && (control.is_none() || name == "Mic") {
-                control = Some(name);
+            if s.has_capture_volume() && (capture.is_none() || name == "Mic") {
+                capture = Some(name.clone());
+            }
+            if s.has_playback_volume() && playback.is_none() {
+                playback = Some(name);
             }
         }
-        let control = control.ok_or(Error::NotFound("ganho do microfone no mixer"))?;
+        let capture = capture.ok_or(Error::NotFound("ganho do microfone no mixer"))?;
         Ok(Mic {
-            card,
+            device,
             mixer,
-            control,
+            capture,
+            playback,
         })
     }
 
-    fn selem(&self) -> Result<Selem<'_>> {
+    pub fn device(&self) -> &MicDevice {
+        &self.device
+    }
+
+    fn selem(&self, name: &str) -> Result<Selem<'_>> {
         self.mixer
-            .find_selem(&SelemId::new(&self.control, 0))
-            .ok_or_else(|| Error::Invalid(format!("controle '{}' sumiu", self.control)))
+            .find_selem(&SelemId::new(name, 0))
+            .ok_or_else(|| Error::Invalid(format!("controle '{name}' sumiu")))
+    }
+
+    fn headphones_selem(&self) -> Result<Selem<'_>> {
+        let name = self
+            .playback
+            .as_deref()
+            .ok_or_else(|| Error::Invalid("este microfone não tem saída de fone".into()))?;
+        self.selem(name)
     }
 
     pub fn status(&self) -> Result<MicStatus> {
-        let s = self.selem()?;
+        let s = self.selem(&self.capture)?;
         let (lo, hi) = s.get_capture_db_range();
         let gain = s.get_capture_vol_db(CH).map_err(alsa_err)?;
         let on = !s.has_capture_switch() || s.get_capture_switch(CH).map_err(alsa_err)? != 0;
+        let headphones = match self.headphones_selem() {
+            Ok(h) => {
+                let (lo, hi) = h.get_playback_db_range();
+                Some(Level {
+                    db: db(h.get_playback_vol_db(CH).map_err(alsa_err)?),
+                    min_db: db(lo),
+                    max_db: db(hi),
+                    on: !h.has_playback_switch()
+                        || h.get_playback_switch(CH).map_err(alsa_err)? != 0,
+                })
+            }
+            Err(_) => None,
+        };
         let pw = PipeWire::read().ok();
-        let node = pw.as_ref().and_then(|p| p.source_for_card(self.card));
+        let node = pw
+            .as_ref()
+            .and_then(|p| p.source_for_card(self.device.card));
         Ok(MicStatus {
-            card: self.card,
+            device: self.device.clone(),
             gain_db: db(gain),
             min_db: db(lo),
             max_db: db(hi),
             on,
+            headphones,
             default: match (&pw, &node) {
                 (Some(p), Some((id, _))) => p.default_source() == Some(*id),
                 _ => false,
@@ -148,29 +179,45 @@ impl Mic {
         })
     }
 
-    /// Ganho em dB (limitado à faixa); devolve o valor que a câmera aplicou.
+    /// Ganho em dB (limitado à faixa); devolve o valor que o microfone aplicou.
     pub fn set_gain(&self, value: f32) -> Result<f32> {
-        let s = self.selem()?;
+        let s = self.selem(&self.capture)?;
         let (lo, hi) = s.get_capture_db_range();
-        let v = ((value * 100.0).round() as i64).clamp(lo.0, hi.0);
-        s.set_capture_db(CH, MilliBel(v), Round::Floor)
+        s.set_capture_db(CH, clamp_mb(value, lo, hi), Round::Floor)
             .map_err(alsa_err)?;
         Ok(db(s.get_capture_vol_db(CH).map_err(alsa_err)?))
     }
 
     pub fn set_on(&self, on: bool) -> Result<()> {
-        let s = self.selem()?;
+        let s = self.selem(&self.capture)?;
         if !s.has_capture_switch() {
             return Err(Error::Invalid("o microfone não tem mudo".into()));
         }
         s.set_capture_switch_all(on as i32).map_err(alsa_err)
     }
 
-    /// Torna o microfone da câmera a entrada padrão do sistema.
+    /// Volume do fone em dB (limitado à faixa); devolve o valor aplicado.
+    pub fn set_headphones(&self, value: f32) -> Result<f32> {
+        let s = self.headphones_selem()?;
+        let (lo, hi) = s.get_playback_db_range();
+        s.set_playback_db_all(clamp_mb(value, lo, hi), Round::Floor)
+            .map_err(alsa_err)?;
+        Ok(db(s.get_playback_vol_db(CH).map_err(alsa_err)?))
+    }
+
+    pub fn set_headphones_on(&self, on: bool) -> Result<()> {
+        let s = self.headphones_selem()?;
+        if !s.has_playback_switch() {
+            return Err(Error::Invalid("o fone não tem mudo".into()));
+        }
+        s.set_playback_switch_all(on as i32).map_err(alsa_err)
+    }
+
+    /// Torna este microfone a entrada padrão do sistema.
     pub fn make_default(&self) -> Result<()> {
         let (id, _) = PipeWire::read()?
-            .source_for_card(self.card)
-            .ok_or(Error::NotFound("entrada da câmera no PipeWire"))?;
+            .source_for_card(self.device.card)
+            .ok_or(Error::NotFound("entrada do microfone no PipeWire"))?;
         let st = Command::new("wpctl")
             .args(["set-default", &id.to_string()])
             .status()
@@ -181,6 +228,10 @@ impl Mic {
             Err(Error::Invalid(format!("wpctl set-default {id} falhou")))
         }
     }
+}
+
+fn clamp_mb(value: f32, lo: MilliBel, hi: MilliBel) -> MilliBel {
+    MilliBel(((value * 100.0).round() as i64).clamp(lo.0, hi.0))
 }
 
 fn db(m: MilliBel) -> f32 {
@@ -266,6 +317,15 @@ impl PipeWire {
         })
     }
 
+    /// Placa ALSA da entrada padrão, se ela for uma placa ALSA.
+    pub fn default_source_card(&self) -> Option<u32> {
+        let n = self.node(self.default_source()?)?;
+        prop(n, "alsa.card")
+            .or_else(|| prop(n, "api.alsa.pcm.card"))?
+            .as_u64()
+            .map(|c| c as u32)
+    }
+
     /// Programas com stream ligado ao nó `source` (sem repetir, sem o medidor).
     pub fn users(&self, source: u64) -> Vec<String> {
         let mut apps = BTreeSet::new();
@@ -300,6 +360,7 @@ impl PipeWire {
 pub struct Meter {
     child: Child,
     peak: Arc<AtomicU32>,
+    zeros: Arc<AtomicU32>,
 }
 
 impl Meter {
@@ -316,20 +377,35 @@ impl Meter {
             .map_err(|e| Error::Invalid(format!("pw-record: {e}")))?;
         let mut out = child.stdout.take().expect("stdout piped");
         let peak = Arc::new(AtomicU32::new(FLOOR_DB.to_bits()));
-        let p = peak.clone();
+        let zeros = Arc::new(AtomicU32::new(0));
+        let (p, z) = (peak.clone(), zeros.clone());
         std::thread::spawn(move || {
             let mut buf = vec![0u8; WINDOW * 2];
             while out.read_exact(&mut buf).is_ok() {
                 p.store(peak_dbfs(&buf).to_bits(), Ordering::Relaxed);
+                if buf.iter().all(|&b| b == 0) {
+                    z.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    z.store(0, Ordering::Relaxed);
+                }
                 on_level();
             }
         });
-        Ok(Meter { child, peak })
+        Ok(Meter { child, peak, zeros })
     }
 
     /// Pico da última janela, em dBFS (FLOOR_DB a 0).
     pub fn peak_db(&self) -> f32 {
         f32::from_bits(self.peak.load(Ordering::Relaxed))
+    }
+}
+
+impl Meter {
+    /// Só zeros absolutos há ~1 s. Microfone de verdade sempre tem algum ruído;
+    /// zero exato quase sempre é mudo no próprio aparelho, que o mixer não vê
+    /// (ex.: botão do Yeti Nano).
+    pub fn digital_silence(&self) -> bool {
+        self.zeros.load(Ordering::Relaxed) >= ZERO_WINDOWS
     }
 }
 
@@ -394,6 +470,7 @@ mod tests {
         assert_eq!(p.source_for_card(1), Some((91, "alsa_input.s600l".into())));
         assert!(p.source_for_card(2).is_none());
         assert_eq!(p.default_source(), Some(91));
+        assert_eq!(p.default_source_card(), Some(1));
         assert_eq!(p.users(91), vec!["Google Chrome".to_string()]);
     }
 }

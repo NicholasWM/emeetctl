@@ -10,7 +10,9 @@ use emeetctl_core::{light, Control, ControlKind, Mode, Target};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
-use theme::{card, segmented, slider_row, swatch, switch_row, ACCENT, LIVE, MUTED, WARN};
+use theme::{
+    card, segmented, slider_db, slider_row, swatch, switch_row, ACCENT, LIVE, MUTED, WARN,
+};
 use worker::{Cmd, Snapshot};
 
 /// Tempo em que a UI confia no valor local depois de mexer, antes de aceitar o da câmera.
@@ -121,6 +123,8 @@ struct App {
     last_error: Option<(String, Instant)>,
     mic_gain: i32,
     mic_gain_edited: Option<Instant>,
+    phones: f32,
+    phones_edited: Option<Instant>,
     /// Medidor de nível, só com a aba Microfone aberta e a janela em foco.
     meter: Option<(String, Meter)>,
     meter_error: Option<String>,
@@ -158,6 +162,8 @@ impl App {
             last_error: None,
             mic_gain: 0,
             mic_gain_edited: None,
+            phones: 0.0,
+            phones_edited: None,
             meter: None,
             meter_error: None,
             shown_db: mic::FLOOR_DB,
@@ -207,6 +213,12 @@ impl App {
                 .is_none_or(|t| t.elapsed() >= EDIT_GRACE)
             {
                 self.mic_gain = m.gain_db.round() as i32;
+            }
+            if let (Some(h), true) = (
+                &m.headphones,
+                self.phones_edited.is_none_or(|t| t.elapsed() >= EDIT_GRACE),
+            ) {
+                self.phones = h.db;
             }
         }
         self.snap = Some(s);
@@ -668,7 +680,23 @@ impl App {
                 return self.unavailable(ui, err);
             }
         };
-        card(ui, "Microfone", |ui| {
+        let mics = self
+            .snap
+            .as_ref()
+            .map(|s| s.mics.clone())
+            .unwrap_or_default();
+        if mics.len() > 1 {
+            let labels: Vec<String> = mics.iter().map(|m| m.short()).collect();
+            let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
+            let sel = mics.iter().position(|m| m.card == st.device.card);
+            if let Some(i) = segmented(ui, &refs, sel) {
+                self.mic_gain_edited = None;
+                self.phones_edited = None;
+                self.send(Cmd::MicSelect(mics[i].card));
+            }
+            ui.add_space(4.0);
+        }
+        card(ui, &st.device.label(), |ui| {
             let mut on = st.on;
             if switch_row(ui, "Ligado", Some("Desligado = mudo"), &mut on) {
                 self.send(Cmd::MicOn(on));
@@ -687,8 +715,28 @@ impl App {
                 self.send(Cmd::MicGain(self.mic_gain as f32));
             }
             ui.add_space(6.0);
-            self.meter_bar(ui, st.on);
+            self.meter_bar(ui, st.on, st.device.model.mute_button());
         });
+        if let Some(h) = &st.headphones {
+            card(ui, "Fone", |ui| {
+                let mut on = h.on;
+                if switch_row(ui, "Ligado", Some("Saída de fone do microfone"), &mut on) {
+                    self.send(Cmd::HeadphonesOn(on));
+                }
+                ui.separator();
+                if slider_db(
+                    ui,
+                    "Volume",
+                    &mut self.phones,
+                    h.min_db..=h.max_db,
+                    0.5,
+                    h.on,
+                ) {
+                    self.phones_edited = Some(Instant::now());
+                    self.send(Cmd::Headphones(self.phones));
+                }
+            });
+        }
         card(ui, "Sistema", |ui| {
             egui::Grid::new("mic-sys")
                 .num_columns(2)
@@ -720,11 +768,13 @@ impl App {
         });
     }
 
-    fn meter_bar(&mut self, ui: &mut egui::Ui, on: bool) {
-        let peak = self
+    fn meter_bar(&mut self, ui: &mut egui::Ui, on: bool, mute_button: Option<&str>) {
+        let (peak, silence) = self
             .meter
             .as_ref()
-            .map_or(mic::FLOOR_DB, |(_, m)| m.peak_db());
+            .map_or((mic::FLOOR_DB, false), |(_, m)| {
+                (m.peak_db(), m.digital_silence())
+            });
         // sobe na hora, desce ~20 dB/s
         let dt = ui.input(|i| i.stable_dt).min(0.1);
         self.shown_db = peak.max(self.shown_db - 20.0 * dt);
@@ -751,6 +801,11 @@ impl App {
             (Some(_), _, _) => format!("{:.1} dBFS · voz entre -18 e -6", self.shown_db),
         };
         ui.label(RichText::new(text).small().color(MUTED));
+        if silence && on {
+            let why = mute_button
+                .unwrap_or("o microfone está mandando zeros: tem mudo no próprio aparelho?");
+            ui.label(RichText::new(format!("Sinal zerado: {why}")).color(WARN));
+        }
     }
 
     fn device_tab(&self, ui: &mut egui::Ui) {

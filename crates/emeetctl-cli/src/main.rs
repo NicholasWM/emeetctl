@@ -50,9 +50,15 @@ enum Cmd {
     /// Controles de imagem (UVC)
     #[command(subcommand)]
     Image(ImageCmd),
-    /// Microfone embutido (ganho, mudo, entrada padrão, nível ao vivo)
-    #[command(subcommand)]
-    Mic(MicCmd),
+    /// Microfones USB: o da câmera, Yeti Nano e outros (ganho, mudo, fone, entrada padrão, nível)
+    Mic {
+        /// Qual microfone: placa, apelido (s600l, nano), vid:pid ou trecho do nome.
+        /// Sem isso, a entrada padrão do sistema.
+        #[arg(short, long)]
+        device: Option<String>,
+        #[command(subcommand)]
+        cmd: MicCmd,
+    },
     /// Câmera virtual "emeetctl Camera": republica a S600L em várias saídas, uma por app (Ctrl+C para parar)
     Virtualcam {
         /// Quantas saídas criar ("emeetctl Camera", "emeetctl Camera 2", ...): cada
@@ -76,9 +82,11 @@ enum ImageCmd {
 
 #[derive(Subcommand)]
 enum MicCmd {
-    /// Ganho, mudo, se é a entrada padrão e quem está gravando
+    /// Microfones USB conectados
+    List,
+    /// Ganho, mudo, fone, se é a entrada padrão e quem está gravando
     Status,
-    /// Ganho em dB (dentro da faixa da câmera, 0–20 dB na S600L)
+    /// Ganho em dB (dentro da faixa do microfone: S600L 0–20, Yeti Nano 0–33)
     Gain {
         #[arg(allow_negative_numbers = true)]
         db: f32,
@@ -87,7 +95,12 @@ enum MicCmd {
     Mute,
     /// Liga o microfone
     Unmute,
-    /// Torna o microfone da câmera a entrada padrão do sistema
+    /// Volume do fone do microfone em dB, ou mute/unmute (ex.: Yeti Nano)
+    Headphones {
+        #[arg(allow_negative_numbers = true)]
+        value: String,
+    },
+    /// Torna o microfone a entrada padrão do sistema
     Default,
     /// Mostra o nível ao vivo (Ctrl+C para parar)
     Level {
@@ -279,7 +292,7 @@ fn run(cli: Cli) -> R {
                 }
             })?;
         }
-        Cmd::Mic(cmd) => mic(cmd, cli.json)?,
+        Cmd::Mic { device, cmd } => mic(device.as_deref(), cmd, cli.json)?,
         Cmd::Image(ImageCmd::Reset) => {
             println!("{} controles no padrão", video()?.reset_defaults()?)
         }
@@ -287,10 +300,26 @@ fn run(cli: Cli) -> R {
     Ok(())
 }
 
-fn mic(cmd: MicCmd, json: bool) -> R {
-    let m = Mic::open()?;
+fn mic(device: Option<&str>, cmd: MicCmd, json: bool) -> R {
+    use emeetctl_core::mic;
+    if let MicCmd::List = cmd {
+        let mics = mic::list();
+        if json {
+            println!("{}", serde_json::to_string_pretty(&mics)?);
+        }
+        for d in mics.iter().filter(|_| !json) {
+            let alias = d
+                .model
+                .alias()
+                .map(|a| format!(" ({a})"))
+                .unwrap_or_default();
+            println!("placa {}  {}  {}{alias}", d.card, d.usb_id, d.label());
+        }
+        return Ok(());
+    }
+    let m = Mic::find(device)?;
     match cmd {
-        MicCmd::Status => {}
+        MicCmd::List | MicCmd::Status => {}
         MicCmd::Gain { db } => {
             let applied = m.set_gain(db)?;
             if !json {
@@ -300,6 +329,17 @@ fn mic(cmd: MicCmd, json: bool) -> R {
         }
         MicCmd::Mute => m.set_on(false)?,
         MicCmd::Unmute => m.set_on(true)?,
+        MicCmd::Headphones { value } => match value.as_str() {
+            "mute" => m.set_headphones_on(false)?,
+            "unmute" => m.set_headphones_on(true)?,
+            v => {
+                let applied = m.set_headphones(v.parse()?)?;
+                if !json {
+                    println!("fone: {applied:.1} dB");
+                    return Ok(());
+                }
+            }
+        },
         MicCmd::Default => m.make_default()?,
         MicCmd::Level { seconds } => return level(&m, seconds),
     }
@@ -313,6 +353,21 @@ fn mic(cmd: MicCmd, json: bool) -> R {
     } else {
         s.in_use_by.join(", ")
     };
+    println!(
+        "{} (placa {}, {})",
+        s.device.label(),
+        s.device.card,
+        s.device.usb_id
+    );
+    if let Some(h) = &s.headphones {
+        println!(
+            "fone:      {:.1} dB ({:.0} a {:.0} dB){}",
+            h.db,
+            h.min_db,
+            h.max_db,
+            if h.on { "" } else { ", mudo" }
+        );
+    }
     println!(
         "microfone: {}\nganho:     {:.1} dB ({:.0}–{:.0} dB)\npadrão:    {}\nem uso:    {users}",
         if s.on { "ligado" } else { "mudo" },
@@ -331,7 +386,7 @@ fn level(m: &Mic, seconds: Option<u64>) -> R {
     let node = m
         .status()?
         .pipewire_node
-        .ok_or("microfone da câmera não aparece no PipeWire")?;
+        .ok_or("o microfone não aparece no PipeWire")?;
     let meter = Meter::start(&node, || {})?;
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let s = stop.clone();
@@ -343,8 +398,13 @@ fn level(m: &Mic, seconds: Option<u64>) -> R {
     {
         let db = meter.peak_db();
         let n = (fraction(db) * WIDTH as f32).round() as usize;
+        let hint = match (meter.digital_silence(), m.device().model.mute_button()) {
+            (true, Some(b)) => format!("  sinal zerado: {b}"),
+            (true, None) => "  sinal zerado: mudo no próprio microfone?".into(),
+            _ => String::new(),
+        };
         print!(
-            "\r{db:6.1} dBFS |{}{}|",
+            "\r{db:6.1} dBFS |{}{}|{hint}\x1b[K",
             "#".repeat(n),
             " ".repeat(WIDTH - n)
         );
