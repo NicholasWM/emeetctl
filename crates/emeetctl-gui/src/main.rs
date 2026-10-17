@@ -5,6 +5,7 @@ mod theme;
 mod worker;
 
 use eframe::egui::{self, Color32, RichText};
+use emeetctl_core::mic::{self, Meter};
 use emeetctl_core::{light, Control, ControlKind, Mode, Target};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -90,6 +91,7 @@ fn label_pt(key: &str) -> Option<&'static str> {
 enum Tab {
     Light,
     Image,
+    Mic,
     Device,
 }
 
@@ -117,6 +119,13 @@ struct App {
     /// Nó de onde a prévia está lendo agora (a câmera física ou a virtual).
     preview_src: Option<String>,
     last_error: Option<(String, Instant)>,
+    mic_gain: i32,
+    mic_gain_edited: Option<Instant>,
+    /// Medidor de nível, só com a aba Microfone aberta e a janela em foco.
+    meter: Option<(String, Meter)>,
+    meter_error: Option<String>,
+    /// Pico com queda lenta, para a barra não piscar.
+    shown_db: f32,
 }
 
 impl App {
@@ -147,6 +156,11 @@ impl App {
             focused: true,
             preview_src: None,
             last_error: None,
+            mic_gain: 0,
+            mic_gain_edited: None,
+            meter: None,
+            meter_error: None,
+            shown_db: mic::FLOOR_DB,
         }
     }
 
@@ -185,6 +199,14 @@ impl App {
                         self.ctrl_values.insert(c.id, c.value);
                     }
                 }
+            }
+        }
+        if let Ok(m) = &s.mic {
+            if self
+                .mic_gain_edited
+                .is_none_or(|t| t.elapsed() >= EDIT_GRACE)
+            {
+                self.mic_gain = m.gain_db.round() as i32;
             }
         }
         self.snap = Some(s);
@@ -614,6 +636,123 @@ impl App {
         }
     }
 
+    fn sync_meter(&mut self, ctx: &egui::Context) {
+        let node = self
+            .snap
+            .as_ref()
+            .and_then(|s| s.mic.as_ref().ok())
+            .and_then(|m| m.pipewire_node.clone())
+            .filter(|_| self.tab == Tab::Mic && self.focused);
+        if self.meter.as_ref().map(|(n, _)| n) == node.as_ref() {
+            return;
+        }
+        self.meter = None;
+        self.shown_db = mic::FLOOR_DB;
+        if let Some(n) = node {
+            let c = ctx.clone();
+            match Meter::start(&n, move || c.request_repaint()) {
+                Ok(m) => {
+                    self.meter = Some((n, m));
+                    self.meter_error = None;
+                }
+                Err(e) => self.meter_error = Some(e.to_string()),
+            }
+        }
+    }
+
+    fn mic_tab(&mut self, ui: &mut egui::Ui) {
+        let st = match self.snap.as_ref().map(|s| &s.mic) {
+            Some(Ok(st)) => st.clone(),
+            other => {
+                let err = other.and_then(|r| r.as_ref().err().cloned());
+                return self.unavailable(ui, err);
+            }
+        };
+        card(ui, "Microfone", |ui| {
+            let mut on = st.on;
+            if switch_row(ui, "Ligado", Some("Desligado = mudo"), &mut on) {
+                self.send(Cmd::MicOn(on));
+            }
+            ui.separator();
+            if slider_row(
+                ui,
+                "Ganho",
+                &mut self.mic_gain,
+                st.min_db.round() as i32..=st.max_db.round() as i32,
+                1,
+                st.on,
+                " dB",
+            ) {
+                self.mic_gain_edited = Some(Instant::now());
+                self.send(Cmd::MicGain(self.mic_gain as f32));
+            }
+            ui.add_space(6.0);
+            self.meter_bar(ui, st.on);
+        });
+        card(ui, "Sistema", |ui| {
+            egui::Grid::new("mic-sys")
+                .num_columns(2)
+                .spacing([18.0, 10.0])
+                .show(ui, |ui| {
+                    ui.label(RichText::new("Entrada padrão").color(MUTED));
+                    ui.label(if st.default { "sim" } else { "não" });
+                    ui.end_row();
+                    ui.label(RichText::new("Em uso por").color(MUTED));
+                    ui.label(if st.in_use_by.is_empty() {
+                        "ninguém".to_string()
+                    } else {
+                        st.in_use_by.join(", ")
+                    });
+                    ui.end_row();
+                });
+            if !st.default {
+                ui.add_space(6.0);
+                if ui
+                    .add(
+                        egui::Button::new("Usar como entrada padrão")
+                            .min_size(egui::vec2(ui.available_width(), 34.0)),
+                    )
+                    .clicked()
+                {
+                    self.send(Cmd::MicDefault);
+                }
+            }
+        });
+    }
+
+    fn meter_bar(&mut self, ui: &mut egui::Ui, on: bool) {
+        let peak = self
+            .meter
+            .as_ref()
+            .map_or(mic::FLOOR_DB, |(_, m)| m.peak_db());
+        // sobe na hora, desce ~20 dB/s
+        let dt = ui.input(|i| i.stable_dt).min(0.1);
+        self.shown_db = peak.max(self.shown_db - 20.0 * dt);
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 12.0), egui::Sense::hover());
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 6.0, theme::FIELD);
+        let f = mic::fraction(self.shown_db);
+        if f > 0.0 && on {
+            let mut fill = rect;
+            fill.set_width(rect.width() * f);
+            let color = match self.shown_db {
+                d if d > -3.0 => LIVE,
+                d if d > -12.0 => WARN,
+                _ => ACCENT,
+            };
+            painter.rect_filled(fill, 6.0, color);
+        }
+        let text = match (&self.meter, &self.meter_error, on) {
+            (_, _, false) => "mudo".into(),
+            (_, Some(e), _) => e.clone(),
+            (None, _, _) => "medidor pausado (janela fora de foco)".into(),
+            (Some(_), _, _) if self.shown_db <= mic::FLOOR_DB => "silêncio".into(),
+            (Some(_), _, _) => format!("{:.1} dBFS · voz entre -18 e -6", self.shown_db),
+        };
+        ui.label(RichText::new(text).small().color(MUTED));
+    }
+
     fn device_tab(&self, ui: &mut egui::Ui) {
         let Some(info) = self.snap.as_ref().and_then(|s| s.info.clone()) else {
             return self.unavailable(ui, Some("câmera não encontrada".into()));
@@ -721,15 +860,16 @@ impl App {
     }
 
     fn side(&mut self, ui: &mut egui::Ui) {
-        let tabs = [Tab::Light, Tab::Image, Tab::Device];
+        let tabs = [Tab::Light, Tab::Image, Tab::Mic, Tab::Device];
         let sel = tabs.iter().position(|t| *t == self.tab);
-        if let Some(i) = segmented(ui, &["Luz", "Imagem", "Dispositivo"], sel) {
+        if let Some(i) = segmented(ui, &["Luz", "Imagem", "Microfone", "Dispositivo"], sel) {
             self.tab = tabs[i];
         }
         ui.add_space(4.0);
         match self.tab {
             Tab::Light => self.light_tab(ui),
             Tab::Image => self.image_tab(ui),
+            Tab::Mic => self.mic_tab(ui),
             Tab::Device => self.device_tab(ui),
         }
     }
@@ -791,7 +931,7 @@ impl App {
     }
 }
 
-/// `--tab luz|imagem|dispositivo` abre direto numa aba.
+/// `--tab luz|imagem|microfone|dispositivo` abre direto numa aba.
 fn initial_tab() -> Tab {
     let args: Vec<String> = std::env::args().collect();
     match args
@@ -801,6 +941,7 @@ fn initial_tab() -> Tab {
         .map(String::as_str)
     {
         Some("imagem") => Tab::Image,
+        Some("microfone") => Tab::Mic,
         Some("dispositivo") => Tab::Device,
         _ => Tab::Light,
     }
@@ -824,6 +965,7 @@ impl eframe::App for App {
             self.absorb(s);
         }
         self.sync_preview(ctx);
+        self.sync_meter(ctx);
         self.header(ctx);
         self.footer(ctx);
 
@@ -861,6 +1003,10 @@ impl eframe::App for App {
                             self.side(ui);
                         });
                 });
+        }
+        if self.meter.is_some() {
+            // a barra cai devagar mesmo sem amostra nova
+            ctx.request_repaint_after(Duration::from_millis(33));
         }
     }
 }
