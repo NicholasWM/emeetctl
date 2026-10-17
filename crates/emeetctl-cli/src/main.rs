@@ -102,12 +102,28 @@ enum MicCmd {
     },
     /// Torna o microfone a entrada padrão do sistema
     Default,
+    /// Microfone limpo: entrada nova com redução de ruído, corte de grave e
+    /// cancelamento de eco (WebRTC), por cima do microfone escolhido
+    Clean {
+        #[arg(value_enum)]
+        estado: Clean,
+        /// Já usar a entrada limpa como padrão do sistema
+        #[arg(long)]
+        default: bool,
+    },
     /// Mostra o nível ao vivo (Ctrl+C para parar)
     Level {
         /// Para depois de N segundos
         #[arg(long)]
         seconds: Option<u64>,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Clean {
+    On,
+    Off,
+    Status,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -317,9 +333,12 @@ fn mic(device: Option<&str>, cmd: MicCmd, json: bool) -> R {
         }
         return Ok(());
     }
+    if let MicCmd::Clean { estado, default } = cmd {
+        return clean(device, estado, default, json);
+    }
     let m = Mic::find(device)?;
     match cmd {
-        MicCmd::List | MicCmd::Status => {}
+        MicCmd::List | MicCmd::Status | MicCmd::Clean { .. } => {}
         MicCmd::Gain { db } => {
             let applied = m.set_gain(db)?;
             if !json {
@@ -374,6 +393,38 @@ fn mic(device: Option<&str>, cmd: MicCmd, json: bool) -> R {
         s.gain_db,
         s.min_db,
         s.max_db,
+        if s.default { "sim" } else { "não" },
+    );
+    Ok(())
+}
+
+fn clean(device: Option<&str>, estado: Clean, default: bool, json: bool) -> R {
+    use emeetctl_core::mic::{self, clean};
+    match estado {
+        Clean::On => {
+            let d = mic::find(device)?;
+            clean::enable(&d)?;
+            if default {
+                clean::make_default()?;
+            }
+        }
+        Clean::Off => clean::disable()?,
+        Clean::Status => {}
+    }
+    let s = clean::status();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&s)?);
+        return Ok(());
+    }
+    println!(
+        "microfone limpo: {}{}\norigem:          {}\npadrão:          {}",
+        if s.active { "ligado" } else { "desligado" },
+        if s.enabled {
+            " (liga com a sessão)"
+        } else {
+            ""
+        },
+        s.source.as_deref().unwrap_or("—"),
         if s.default { "sim" } else { "não" },
     );
     Ok(())

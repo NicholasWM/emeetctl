@@ -104,6 +104,15 @@ fn tools() -> Value {
             "inputSchema": { "type": "object", "properties": { "device": { "type": "string", "description": "Qual microfone (de list_microphones): placa, apelido s600l/nano, vid:pid ou trecho do nome. Sem ele: a entrada padrão do sistema." } } }
         },
         {
+            "name": "set_clean_mic",
+            "description": "Microfone limpo: cria (enabled=true) uma entrada nova '<microfone> (limpo)' com redução de ruído, corte de grave e cancelamento de eco do WebRTC por cima do microfone, ou desliga (enabled=false). make_default=true já a torna a entrada padrão. Só um microfone limpo por vez; ligar em outro microfone troca.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "enabled": { "type": "boolean" }, "make_default": { "type": "boolean" }, "device": { "type": "string", "description": "Qual microfone (de list_microphones): placa, apelido s600l/nano, vid:pid ou trecho do nome. Sem ele: a entrada padrão do sistema." } },
+                "required": ["enabled"]
+            }
+        },
+        {
             "name": "set_headphones",
             "description": "Fone ligado ao microfone (ex.: Yeti Nano): volume em dB e/ou mudo. Só para microfones com saída de fone.",
             "inputSchema": {
@@ -212,6 +221,23 @@ fn call(name: &str, a: &Value) -> R {
             }
             v.set(c.id, value).map_err(e)?;
             Ok(json!({ "ok": true, "control": c.key, "value": v.get(c.id).map_err(e)? }))
+        }
+        "set_clean_mic" => {
+            use emeetctl_core::mic::{self, clean};
+            let on = a
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or("argumento 'enabled' ausente")?;
+            if on {
+                let d = mic::find(a.get("device").and_then(Value::as_str)).map_err(e)?;
+                clean::enable(&d).map_err(e)?;
+                if a.get("make_default").and_then(Value::as_bool) == Some(true) {
+                    clean::make_default().map_err(e)?;
+                }
+            } else {
+                clean::disable().map_err(e)?;
+            }
+            Ok(json!(clean::status()))
         }
         "list_microphones" => Ok(json!(emeetctl_core::mic::list())),
         "get_mic_status" => Ok(json!(mic_arg(a)?.status().map_err(e)?)),

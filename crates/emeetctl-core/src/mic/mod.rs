@@ -5,6 +5,7 @@
 //! Só usa os controles padrão de áudio USB (Feature Unit): nenhum comando do
 //! fabricante passa por aqui.
 
+pub mod clean;
 mod device;
 
 pub use device::{camera, find, list, MicDevice, Model};
@@ -218,15 +219,20 @@ impl Mic {
         let (id, _) = PipeWire::read()?
             .source_for_card(self.device.card)
             .ok_or(Error::NotFound("entrada do microfone no PipeWire"))?;
-        let st = Command::new("wpctl")
-            .args(["set-default", &id.to_string()])
-            .status()
-            .map_err(|e| Error::Invalid(format!("wpctl: {e}")))?;
-        if st.success() {
-            Ok(())
-        } else {
-            Err(Error::Invalid(format!("wpctl set-default {id} falhou")))
-        }
+        set_default(id)
+    }
+}
+
+/// Torna o nó `id` a entrada padrão do sistema (`wpctl set-default`).
+pub(crate) fn set_default(id: u64) -> Result<()> {
+    let st = Command::new("wpctl")
+        .args(["set-default", &id.to_string()])
+        .status()
+        .map_err(|e| Error::Invalid(format!("wpctl: {e}")))?;
+    if st.success() {
+        Ok(())
+    } else {
+        Err(Error::Invalid(format!("wpctl set-default {id} falhou")))
     }
 }
 
@@ -317,6 +323,15 @@ impl PipeWire {
         })
     }
 
+    /// Id do nó com este `node.name`.
+    pub fn node_id(&self, name: &str) -> Option<u64> {
+        self.nodes().find_map(|o| {
+            (prop_str(o, "node.name") == Some(name))
+                .then(|| o.get("id")?.as_u64())
+                .flatten()
+        })
+    }
+
     /// Placa ALSA da entrada padrão, se ela for uma placa ALSA.
     pub fn default_source_card(&self) -> Option<u32> {
         let n = self.node(self.default_source()?)?;
@@ -341,7 +356,15 @@ impl PipeWire {
             let Some(n) = info["input-node-id"].as_u64().and_then(|i| self.node(i)) else {
                 continue;
             };
-            if prop_str(n, "node.name") == Some(METER_NODE) {
+            let name = prop_str(n, "node.name");
+            if name == Some(METER_NODE) {
+                continue;
+            }
+            // O microfone limpo lê daqui: quem usa ele, usa este microfone.
+            if name == Some(&format!("{}.capture", clean::NODE)) {
+                if let Some(id) = self.node_id(clean::NODE) {
+                    apps.extend(self.users(id).into_iter().map(|a| format!("{a} (limpo)")));
+                }
                 continue;
             }
             let app = prop_str(n, "application.name")
@@ -460,6 +483,14 @@ mod tests {
        "info": {"props": {"media.class": "Stream/Input/Audio", "application.name": "Google Chrome"}}},
       {"id": 201, "type": "PipeWire:Interface:Node",
        "info": {"props": {"media.class": "Stream/Input/Audio", "node.name": "emeetctl-meter"}}},
+      {"id": 210, "type": "PipeWire:Interface:Node",
+       "info": {"props": {"media.class": "Stream/Input/Audio", "node.name": "emeetctl-clean.capture"}}},
+      {"id": 211, "type": "PipeWire:Interface:Node",
+       "info": {"props": {"media.class": "Audio/Source", "node.name": "emeetctl-clean"}}},
+      {"id": 212, "type": "PipeWire:Interface:Node",
+       "info": {"props": {"media.class": "Stream/Input/Audio", "application.name": "Zoom"}}},
+      {"id": 302, "type": "PipeWire:Interface:Link", "info": {"output-node-id": 91, "input-node-id": 210}},
+      {"id": 303, "type": "PipeWire:Interface:Link", "info": {"output-node-id": 211, "input-node-id": 212}},
       {"id": 300, "type": "PipeWire:Interface:Link", "info": {"output-node-id": 91, "input-node-id": 200}},
       {"id": 301, "type": "PipeWire:Interface:Link", "info": {"output-node-id": 91, "input-node-id": 201}}
     ]"#;
@@ -471,6 +502,10 @@ mod tests {
         assert!(p.source_for_card(2).is_none());
         assert_eq!(p.default_source(), Some(91));
         assert_eq!(p.default_source_card(), Some(1));
-        assert_eq!(p.users(91), vec!["Google Chrome".to_string()]);
+        assert_eq!(
+            p.users(91),
+            vec!["Google Chrome".to_string(), "Zoom (limpo)".to_string()]
+        );
+        assert_eq!(p.node_id("emeetctl-clean"), Some(211));
     }
 }
