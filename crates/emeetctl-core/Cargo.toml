@@ -1,12 +1,14 @@
 [package]
 name = "emeetctl-core"
-description = "Protocolo de luz (HID) e controles de imagem (V4L2) da EMEET SmartCam S600L"
+description = "Protocolo de luz (HID), controles de imagem (V4L2) e microfone (ALSA) da EMEET SmartCam S600L"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+alsa.workspace = true
 libc.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 v4l.workspace = true
 zune-jpeg.workspace = true

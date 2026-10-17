@@ -37,6 +37,9 @@ jobs:
           VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
           test "$TAG" = "v$VERSION" || { echo "::error::tag $TAG != versão v$VERSION do Cargo.toml"; exit 1; }
 
+      - name: ALSA (microfone)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev
+
       - name: Toolchain e cargo-deb
         run: |
           rustup show active-toolchain || rustup toolchain install
