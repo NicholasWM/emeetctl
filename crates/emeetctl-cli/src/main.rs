@@ -1,12 +1,12 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use emeetctl_core::{light, ControlKind, Light, Mode, Target, Video};
+use emeetctl_core::{light, ControlKind, Light, Mic, Mode, Target, Video};
 use std::process::ExitCode;
 
 #[derive(Parser)]
 #[command(
     name = "emeetctl",
     version,
-    about = "Luz e imagem da EMEET SmartCam S600L no Linux"
+    about = "Luz, imagem e microfone da EMEET SmartCam S600L no Linux"
 )]
 struct Cli {
     /// Saída em JSON
@@ -50,6 +50,9 @@ enum Cmd {
     /// Controles de imagem (UVC)
     #[command(subcommand)]
     Image(ImageCmd),
+    /// Microfone embutido (ganho, mudo, entrada padrão, nível ao vivo)
+    #[command(subcommand)]
+    Mic(MicCmd),
     /// Câmera virtual "emeetctl Camera": republica a S600L em várias saídas, uma por app (Ctrl+C para parar)
     Virtualcam {
         /// Quantas saídas criar ("emeetctl Camera", "emeetctl Camera 2", ...): cada
@@ -69,6 +72,29 @@ enum ImageCmd {
     Set { controle: String, valor: String },
     /// Volta todos os controles ao padrão de fábrica
     Reset,
+}
+
+#[derive(Subcommand)]
+enum MicCmd {
+    /// Ganho, mudo, se é a entrada padrão e quem está gravando
+    Status,
+    /// Ganho em dB (dentro da faixa da câmera, 0–20 dB na S600L)
+    Gain {
+        #[arg(allow_negative_numbers = true)]
+        db: f32,
+    },
+    /// Silencia o microfone
+    Mute,
+    /// Liga o microfone
+    Unmute,
+    /// Torna o microfone da câmera a entrada padrão do sistema
+    Default,
+    /// Mostra o nível ao vivo (Ctrl+C para parar)
+    Level {
+        /// Para depois de N segundos
+        #[arg(long)]
+        seconds: Option<u64>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -253,10 +279,79 @@ fn run(cli: Cli) -> R {
                 }
             })?;
         }
+        Cmd::Mic(cmd) => mic(cmd, cli.json)?,
         Cmd::Image(ImageCmd::Reset) => {
             println!("{} controles no padrão", video()?.reset_defaults()?)
         }
     }
+    Ok(())
+}
+
+fn mic(cmd: MicCmd, json: bool) -> R {
+    let m = Mic::open()?;
+    match cmd {
+        MicCmd::Status => {}
+        MicCmd::Gain { db } => {
+            let applied = m.set_gain(db)?;
+            if !json {
+                println!("ganho: {applied:.1} dB");
+                return Ok(());
+            }
+        }
+        MicCmd::Mute => m.set_on(false)?,
+        MicCmd::Unmute => m.set_on(true)?,
+        MicCmd::Default => m.make_default()?,
+        MicCmd::Level { seconds } => return level(&m, seconds),
+    }
+    let s = m.status()?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&s)?);
+        return Ok(());
+    }
+    let users = if s.in_use_by.is_empty() {
+        "ninguém".to_string()
+    } else {
+        s.in_use_by.join(", ")
+    };
+    println!(
+        "microfone: {}\nganho:     {:.1} dB ({:.0}–{:.0} dB)\npadrão:    {}\nem uso:    {users}",
+        if s.on { "ligado" } else { "mudo" },
+        s.gain_db,
+        s.min_db,
+        s.max_db,
+        if s.default { "sim" } else { "não" },
+    );
+    Ok(())
+}
+
+/// Barra de nível no terminal, redesenhada na mesma linha.
+fn level(m: &Mic, seconds: Option<u64>) -> R {
+    use emeetctl_core::mic::{fraction, Meter};
+    use std::io::Write;
+    let node = m
+        .status()?
+        .pipewire_node
+        .ok_or("microfone da câmera não aparece no PipeWire")?;
+    let meter = Meter::start(&node, || {})?;
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let s = stop.clone();
+    ctrlc_handler(move || s.store(true, std::sync::atomic::Ordering::Relaxed));
+    let start = std::time::Instant::now();
+    const WIDTH: usize = 40;
+    while !stop.load(std::sync::atomic::Ordering::Relaxed)
+        && seconds.is_none_or(|n| start.elapsed().as_secs() < n)
+    {
+        let db = meter.peak_db();
+        let n = (fraction(db) * WIDTH as f32).round() as usize;
+        print!(
+            "\r{db:6.1} dBFS |{}{}|",
+            "#".repeat(n),
+            " ".repeat(WIDTH - n)
+        );
+        std::io::stdout().flush()?;
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    println!();
     Ok(())
 }
 

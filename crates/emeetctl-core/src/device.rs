@@ -113,7 +113,7 @@ fn find_video() -> (Option<PathBuf>, Option<PathBuf>) {
     (None, None)
 }
 
-fn usb_parent(start: &Path) -> Option<PathBuf> {
+pub(crate) fn usb_parent(start: &Path) -> Option<PathBuf> {
     let mut p = fs::canonicalize(start).ok()?;
     loop {
         if p.join("idVendor").exists() {

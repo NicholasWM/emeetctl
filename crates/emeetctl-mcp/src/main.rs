@@ -1,7 +1,7 @@
 //! Servidor MCP por stdio (JSON-RPC 2.0, uma mensagem por linha).
 //! Cada chamada abre o dispositivo, age e fecha: a câmera pode ser desconectada entre chamadas.
 
-use emeetctl_core::{light, ControlKind, Light, Mode, Target, Video};
+use emeetctl_core::{light, ControlKind, Light, Mic, Mode, Target, Video};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
 
@@ -11,7 +11,7 @@ fn tools() -> Value {
     json!([
         {
             "name": "get_status",
-            "description": "Lê o estado da câmera EMEET S600L: dados do dispositivo (produto, serial, firmware, programas usando a câmera agora em in_use_by) e da luz (fill light e anel RGB ligados, modo, cor, brilho).",
+            "description": "Lê o estado da câmera EMEET S600L: dados do dispositivo (produto, serial, firmware, programas usando a câmera agora em in_use_by), da luz (fill light e anel RGB ligados, modo, cor, brilho) e do microfone (ganho, mudo, padrão).",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
@@ -71,6 +71,34 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "get_mic_status",
+            "description": "Lê o microfone embutido da câmera: ganho em dB e faixa, se está mudo (on=false), se é a entrada padrão do sistema e quais programas estão gravando dele (in_use_by).",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "set_mic_gain",
+            "description": "Ganho do microfone da câmera em dB, dentro da faixa de get_mic_status (0-20 dB na S600L). Devolve o estado depois da mudança.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "db": { "type": "number" } },
+                "required": ["db"]
+            }
+        },
+        {
+            "name": "set_mic_mute",
+            "description": "Silencia (muted=true) ou liga (muted=false) o microfone da câmera.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "muted": { "type": "boolean" } },
+                "required": ["muted"]
+            }
+        },
+        {
+            "name": "set_mic_default",
+            "description": "Torna o microfone da câmera a entrada de áudio padrão do sistema (PipeWire).",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
             "name": "reset_image_controls",
             "description": "Volta todos os controles de imagem ao padrão de fábrica.",
             "inputSchema": { "type": "object", "properties": {} }
@@ -90,6 +118,10 @@ fn video() -> Result<Video, String> {
     let p = emeetctl_core::find().map_err(|e| e.to_string())?;
     let v = p.video.ok_or("nó de vídeo da câmera não encontrado")?;
     Video::open(&v).map_err(|e| e.to_string())
+}
+
+fn mic() -> Result<Mic, String> {
+    Mic::open().map_err(|e| e.to_string())
 }
 
 fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str, String> {
@@ -113,7 +145,11 @@ fn call(name: &str, a: &Value) -> R {
                 Ok(s) => json!(s),
                 Err(m) => json!({ "error": m }),
             };
-            Ok(json!({ "device": info, "light": light }))
+            let mic = match mic().and_then(|m| m.status().map_err(e)) {
+                Ok(s) => json!(s),
+                Err(m) => json!({ "error": m }),
+            };
+            Ok(json!({ "device": info, "light": light, "microphone": mic }))
         }
         "set_light_power" => {
             let t = match str_arg(a, "target")? {
@@ -159,6 +195,30 @@ fn call(name: &str, a: &Value) -> R {
             v.set(c.id, value).map_err(e)?;
             Ok(json!({ "ok": true, "control": c.key, "value": v.get(c.id).map_err(e)? }))
         }
+        "get_mic_status" => Ok(json!(mic()?.status().map_err(e)?)),
+        "set_mic_gain" => {
+            let db = a
+                .get("db")
+                .and_then(Value::as_f64)
+                .ok_or("argumento 'db' ausente")?;
+            let m = mic()?;
+            m.set_gain(db as f32).map_err(e)?;
+            Ok(json!(m.status().map_err(e)?))
+        }
+        "set_mic_mute" => {
+            let muted = a
+                .get("muted")
+                .and_then(Value::as_bool)
+                .ok_or("argumento 'muted' ausente")?;
+            let m = mic()?;
+            m.set_on(!muted).map_err(e)?;
+            Ok(json!(m.status().map_err(e)?))
+        }
+        "set_mic_default" => {
+            let m = mic()?;
+            m.make_default().map_err(e)?;
+            Ok(json!(m.status().map_err(e)?))
+        }
         "reset_image_controls" => {
             Ok(json!({ "ok": true, "reset": video()?.reset_defaults().map_err(e)? }))
         }
@@ -180,7 +240,7 @@ fn handle(msg: &Value) -> Option<Value> {
                 "protocolVersion": version,
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "emeetctl", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Controla a webcam EMEET SmartCam S600L: luz (anel RGB e fill light) e imagem (foco, zoom, exposição, balanço de branco). Use get_status antes de mudar algo."
+                "instructions": "Controla a webcam EMEET SmartCam S600L: luz (anel RGB e fill light), imagem (foco, zoom, exposição, balanço de branco) e o microfone embutido (ganho, mudo, entrada padrão). Use get_status antes de mudar algo."
             })
         }
         "ping" => json!({}),

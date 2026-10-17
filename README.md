@@ -2,7 +2,7 @@
 
 **Website and downloads:** https://nicholaswm.github.io/emeetctl/
 
-Open source Linux control for the **EMEET SmartCam S600L** webcam (USB `328f:00ef`): the ring light (RGB + fill light) and the image controls, with a **GUI**, a **CLI** and an **MCP server** so AI agents can drive the camera too.
+Open source Linux control for the **EMEET SmartCam S600L** webcam (USB `328f:00ef`): the ring light (RGB + fill light), the image controls and the built-in microphone, with a **GUI**, a **CLI** and an **MCP server** so AI agents can drive the camera too.
 
 The vendor app (EMEET Studio) only exists for Windows and macOS. The light protocol was reverse engineered from a passive USB capture of EMEET Studio 2.0.4 (firmware 1.0.19), with no decompilation; see [Protocol](#protocol).
 
@@ -19,6 +19,7 @@ The vendor app (EMEET Studio) only exists for Windows and macOS. The light proto
 | **Any** RGB color (the vendor app has 6 presets) | ✔ | `emeetctl color ff0000` | `set_light_color` |
 | Light brightness | ✔ | `emeetctl brightness 40` | `set_light_brightness` |
 | Image: brightness, contrast, saturation, hue, gamma, gain, sharpness, white balance, exposure, focus, zoom, anti-flicker, backlight | ✔ | `emeetctl image list/get/set/reset` | `list_image_controls`, `set_image_control`, `reset_image_controls` |
+| Built-in microphone: gain (0–20 dB), mute, live level meter, make it the default input, who is recording from it | ✔ | `emeetctl mic status/gain/mute/unmute/default/level` | `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default` |
 | Live camera preview (MJPEG 1280×720, YUYV fallback; released when paused) | ✔ | | |
 | Device info (serial, firmware) | ✔ | `emeetctl info` | `get_status` |
 
@@ -26,7 +27,7 @@ Firmware update is deliberately **not** supported. The vendor HID channel may ca
 
 ## Install
 
-Requires Rust 1.81+ (no system libraries for the CLI/MCP; the GUI uses `eframe`/`egui`).
+Requires Rust 1.81+ and the ALSA headers (`sudo apt install libasound2-dev`). The microphone status and meter use PipeWire (`pw-dump`, `pw-record`, `wpctl`); gain and mute work with plain ALSA.
 
 ```bash
 cargo install --path crates/emeetctl-cli   # emeetctl
@@ -60,6 +61,8 @@ emeetctl image set focus_automatic_continuous off
 emeetctl image set focus_absolute 420
 emeetctl image set zoom_absolute 200
 emeetctl image reset
+emeetctl mic gain 13               # microphone gain in dB
+emeetctl mic level                 # live level meter (Ctrl+C to stop)
 emeetctl --json status             # machine-readable output
 ```
 
@@ -71,7 +74,7 @@ emeetctl --json status             # machine-readable output
 claude mcp add emeetctl -- emeetctl-mcp
 ```
 
-Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`. Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
+Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default`. Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
 
 ## Protocol
 

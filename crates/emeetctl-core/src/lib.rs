@@ -1,16 +1,19 @@
-//! Núcleo do emeetctl: descoberta do dispositivo, protocolo HID da luz e controles V4L2.
+//! Núcleo do emeetctl: descoberta do dispositivo, protocolo HID da luz, controles V4L2
+//! e o microfone embutido (ALSA + PipeWire).
 //!
 //! O protocolo da luz foi decifrado por captura USB passiva do EMEET Studio 2.0.4
 //! (firmware 1.0.19). Só os opcodes observados na captura são enviados.
 
 pub mod device;
 pub mod light;
+pub mod mic;
 pub mod usage;
 pub mod video;
 pub mod virtualcam;
 
 pub use device::{find, DeviceInfo, DevicePaths};
 pub use light::{Light, LightStatus, Mode, Target};
+pub use mic::{Mic, MicStatus};
 pub use usage::{camera_users, describe as describe_users, CameraUser};
 pub use video::{Control, ControlKind, Video};
 
