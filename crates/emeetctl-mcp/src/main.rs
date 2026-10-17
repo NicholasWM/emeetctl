@@ -71,32 +71,45 @@ fn tools() -> Value {
             }
         },
         {
-            "name": "get_mic_status",
-            "description": "Lê o microfone embutido da câmera: ganho em dB e faixa, se está mudo (on=false), se é a entrada padrão do sistema e quais programas estão gravando dele (in_use_by).",
+            "name": "list_microphones",
+            "description": "Lista os microfones USB conectados (o da câmera S600L, Yeti Nano e outros): placa, nome, vid:pid e modelo.",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
+            "name": "get_mic_status",
+            "description": "Lê um microfone: ganho em dB e faixa, se está mudo (on=false), fone (se houver), se é a entrada padrão do sistema e quais programas estão gravando dele (in_use_by).",
+            "inputSchema": { "type": "object", "properties": { "device": { "type": "string", "description": "Qual microfone (de list_microphones): placa, apelido s600l/nano, vid:pid ou trecho do nome. Sem ele: a entrada padrão do sistema." } } }
+        },
+        {
             "name": "set_mic_gain",
-            "description": "Ganho do microfone da câmera em dB, dentro da faixa de get_mic_status (0-20 dB na S600L). Devolve o estado depois da mudança.",
+            "description": "Ganho do microfone em dB, dentro da faixa de get_mic_status (S600L 0-20, Yeti Nano 0-33). Devolve o estado depois da mudança.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "db": { "type": "number" } },
+                "properties": { "db": { "type": "number" }, "device": { "type": "string", "description": "Qual microfone (de list_microphones): placa, apelido s600l/nano, vid:pid ou trecho do nome. Sem ele: a entrada padrão do sistema." } },
                 "required": ["db"]
             }
         },
         {
             "name": "set_mic_mute",
-            "description": "Silencia (muted=true) ou liga (muted=false) o microfone da câmera.",
+            "description": "Silencia (muted=true) ou liga (muted=false) o microfone. O botão de mudo físico do Yeti Nano não passa por aqui.",
             "inputSchema": {
                 "type": "object",
-                "properties": { "muted": { "type": "boolean" } },
+                "properties": { "muted": { "type": "boolean" }, "device": { "type": "string", "description": "Qual microfone (de list_microphones): placa, apelido s600l/nano, vid:pid ou trecho do nome. Sem ele: a entrada padrão do sistema." } },
                 "required": ["muted"]
             }
         },
         {
             "name": "set_mic_default",
-            "description": "Torna o microfone da câmera a entrada de áudio padrão do sistema (PipeWire).",
-            "inputSchema": { "type": "object", "properties": {} }
+            "description": "Torna o microfone a entrada de áudio padrão do sistema (PipeWire).",
+            "inputSchema": { "type": "object", "properties": { "device": { "type": "string", "description": "Qual microfone (de list_microphones): placa, apelido s600l/nano, vid:pid ou trecho do nome. Sem ele: a entrada padrão do sistema." } } }
+        },
+        {
+            "name": "set_headphones",
+            "description": "Fone ligado ao microfone (ex.: Yeti Nano): volume em dB e/ou mudo. Só para microfones com saída de fone.",
+            "inputSchema": {
+                "type": "object",
+                "properties": { "db": { "type": "number" }, "muted": { "type": "boolean" }, "device": { "type": "string", "description": "Qual microfone (de list_microphones): placa, apelido s600l/nano, vid:pid ou trecho do nome. Sem ele: a entrada padrão do sistema." } }
+            }
         },
         {
             "name": "reset_image_controls",
@@ -122,6 +135,11 @@ fn video() -> Result<Video, String> {
 
 fn mic() -> Result<Mic, String> {
     Mic::open().map_err(|e| e.to_string())
+}
+
+/// Microfone do argumento `device`; sem ele, a entrada padrão do sistema.
+fn mic_arg(a: &Value) -> Result<Mic, String> {
+    Mic::find(a.get("device").and_then(Value::as_str)).map_err(|e| e.to_string())
 }
 
 fn str_arg<'a>(a: &'a Value, k: &str) -> Result<&'a str, String> {
@@ -195,13 +213,24 @@ fn call(name: &str, a: &Value) -> R {
             v.set(c.id, value).map_err(e)?;
             Ok(json!({ "ok": true, "control": c.key, "value": v.get(c.id).map_err(e)? }))
         }
-        "get_mic_status" => Ok(json!(mic()?.status().map_err(e)?)),
+        "list_microphones" => Ok(json!(emeetctl_core::mic::list())),
+        "get_mic_status" => Ok(json!(mic_arg(a)?.status().map_err(e)?)),
+        "set_headphones" => {
+            let m = mic_arg(a)?;
+            if let Some(db) = a.get("db").and_then(Value::as_f64) {
+                m.set_headphones(db as f32).map_err(e)?;
+            }
+            if let Some(muted) = a.get("muted").and_then(Value::as_bool) {
+                m.set_headphones_on(!muted).map_err(e)?;
+            }
+            Ok(json!(m.status().map_err(e)?))
+        }
         "set_mic_gain" => {
             let db = a
                 .get("db")
                 .and_then(Value::as_f64)
                 .ok_or("argumento 'db' ausente")?;
-            let m = mic()?;
+            let m = mic_arg(a)?;
             m.set_gain(db as f32).map_err(e)?;
             Ok(json!(m.status().map_err(e)?))
         }
@@ -210,12 +239,12 @@ fn call(name: &str, a: &Value) -> R {
                 .get("muted")
                 .and_then(Value::as_bool)
                 .ok_or("argumento 'muted' ausente")?;
-            let m = mic()?;
+            let m = mic_arg(a)?;
             m.set_on(!muted).map_err(e)?;
             Ok(json!(m.status().map_err(e)?))
         }
         "set_mic_default" => {
-            let m = mic()?;
+            let m = mic_arg(a)?;
             m.make_default().map_err(e)?;
             Ok(json!(m.status().map_err(e)?))
         }
@@ -240,7 +269,7 @@ fn handle(msg: &Value) -> Option<Value> {
                 "protocolVersion": version,
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "emeetctl", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Controla a webcam EMEET SmartCam S600L: luz (anel RGB e fill light), imagem (foco, zoom, exposição, balanço de branco) e o microfone embutido (ganho, mudo, entrada padrão). Use get_status antes de mudar algo."
+                "instructions": "Controla a webcam EMEET SmartCam S600L: luz (anel RGB e fill light), imagem (foco, zoom, exposição, balanço de branco) e microfones USB, o da câmera e outros como o Yeti Nano (ganho, mudo, fone, entrada padrão). Use get_status antes de mudar algo."
             })
         }
         "ping" => json!({}),
