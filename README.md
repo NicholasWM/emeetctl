@@ -2,7 +2,7 @@
 
 **Website and downloads:** https://nicholaswm.github.io/emeetctl/
 
-Open source Linux control for the **EMEET SmartCam S600L** webcam (USB `328f:00ef`): the ring light (RGB + fill light), the image controls and the built-in microphone, with a **GUI**, a **CLI** and an **MCP server** so AI agents can drive the camera too.
+Open source Linux control for the **EMEET SmartCam S600L** webcam (USB `328f:00ef`): the ring light (RGB + fill light), the image controls and the microphones (the camera's built-in one and any other USB mic on the desk, e.g. a Blue Yeti Nano), with a **GUI**, a **CLI** and an **MCP server** so AI agents can drive the camera too.
 
 The vendor app (EMEET Studio) only exists for Windows and macOS. The light protocol was reverse engineered from a passive USB capture of EMEET Studio 2.0.4 (firmware 1.0.19), with no decompilation; see [Protocol](#protocol).
 
@@ -19,7 +19,8 @@ The vendor app (EMEET Studio) only exists for Windows and macOS. The light proto
 | **Any** RGB color (the vendor app has 6 presets) | ✔ | `emeetctl color ff0000` | `set_light_color` |
 | Light brightness | ✔ | `emeetctl brightness 40` | `set_light_brightness` |
 | Image: brightness, contrast, saturation, hue, gamma, gain, sharpness, white balance, exposure, focus, zoom, anti-flicker, backlight | ✔ | `emeetctl image list/get/set/reset` | `list_image_controls`, `set_image_control`, `reset_image_controls` |
-| Built-in microphone: gain (0–20 dB), mute, live level meter, make it the default input, who is recording from it | ✔ | `emeetctl mic status/gain/mute/unmute/default/level` | `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default` |
+| Microphones (camera mic, Yeti Nano, any USB mic): gain, mute, live level meter, make it the default input, who is recording from it | ✔ | `emeetctl mic [-d nano] list/status/gain/mute/unmute/default/level` | `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default` |
+| Headphone output of the mic (Yeti Nano): volume, mute | ✔ | `emeetctl mic -d nano headphones -12` | `set_headphones` |
 | Live camera preview (MJPEG 1280×720, YUYV fallback; released when paused) | ✔ | | |
 | Device info (serial, firmware) | ✔ | `emeetctl info` | `get_status` |
 
@@ -61,7 +62,8 @@ emeetctl image set focus_automatic_continuous off
 emeetctl image set focus_absolute 420
 emeetctl image set zoom_absolute 200
 emeetctl image reset
-emeetctl mic gain 13               # microphone gain in dB
+emeetctl mic list                  # USB microphones (camera = s600l, Yeti Nano = nano)
+emeetctl mic -d s600l gain 13      # microphone gain in dB; without -d, the system default input
 emeetctl mic level                 # live level meter (Ctrl+C to stop)
 emeetctl --json status             # machine-readable output
 ```
@@ -74,7 +76,7 @@ emeetctl --json status             # machine-readable output
 claude mcp add emeetctl -- emeetctl-mcp
 ```
 
-Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default`. Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
+Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`, `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default`, `set_headphones` (mic tools take an optional `device`). Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
 
 ## Protocol
 
@@ -103,6 +105,8 @@ Brightness ranges seen in the vendor slider: ambient/rainbow `0x14–0xff`, cool
 ## Not mapped yet
 
 The UVC Extension Unit `{46394292-0cd0-4ae3-8783-3133f9eaaa3b}` (10 controls) is still unknown. Candidates from public docs: image flip/mirror, factory reset, microphone noise reduction, boot light behaviour. Contributions with USB captures are welcome.
+
+Blue Yeti Nano (`b58e:0005`): only the standard USB audio controls are used (mic gain 0–33 dB, headphone volume, mutes). Polar pattern and monitor mix live on a vendor HID report that is not mapped yet (capture plan in `notes/capture-yeti-nano.md`). The front mute button is invisible to the host: the mic just sends zeros, so the level meter warns on digital silence.
 
 ## Layout
 
