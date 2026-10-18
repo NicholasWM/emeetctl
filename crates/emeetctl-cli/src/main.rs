@@ -75,6 +75,48 @@ enum Cmd {
         #[arg(short, long)]
         output: Option<std::path::PathBuf>,
     },
+    /// Grava o PC: o som do sistema e o microfone em trilhas separadas (e a tela
+    /// com --video), e transcreve ao parar (Ctrl+C para parar)
+    Pc {
+        /// Grava também a tela inteira (X11) num MKV; sem isso, só áudio num MKA
+        #[arg(long)]
+        video: bool,
+        /// Microfone: padrao (entrada padrão), limpo, nenhum, ou um microfone
+        /// (placa, s600l, nano, vid:pid, trecho do nome)
+        #[arg(short, long)]
+        mic: Option<String>,
+        /// Não grava o som do sistema, só o microfone
+        #[arg(long)]
+        no_system: bool,
+        /// Quadros por segundo da tela
+        #[arg(long, default_value_t = 15)]
+        fps: u32,
+        /// Para depois de N segundos
+        #[arg(long)]
+        seconds: Option<u32>,
+        /// Arquivo de saída (padrão: pasta de música ou de vídeos, pc-<data e hora>)
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+        /// Não transcreve ao parar
+        #[arg(long)]
+        no_transcribe: bool,
+        /// Modelo do Whisper
+        #[arg(long, default_value = "large-v3")]
+        model: String,
+        /// Idioma da fala (pt, en...); sem ele, detecta por trilha
+        #[arg(long)]
+        lang: Option<String>,
+    },
+    /// Transcreve uma gravação com o Whisper, trilha por trilha (.txt e .srt ao lado)
+    Transcribe {
+        arquivo: std::path::PathBuf,
+        /// Modelo do Whisper
+        #[arg(long, default_value = "large-v3")]
+        model: String,
+        /// Idioma da fala (pt, en...); sem ele, detecta por trilha
+        #[arg(long)]
+        lang: Option<String>,
+    },
     /// Câmera virtual "emeetctl Camera": republica a S600L em várias saídas, uma por app (Ctrl+C para parar)
     Virtualcam {
         /// Quantas saídas criar ("emeetctl Camera", "emeetctl Camera 2", ...): cada
@@ -331,6 +373,43 @@ fn run(cli: Cli) -> R {
             seconds,
             output,
         } => record(&format, mic.as_deref(), seconds, output, cli.json)?,
+        Cmd::Pc {
+            video,
+            mic,
+            no_system,
+            fps,
+            seconds,
+            output,
+            no_transcribe,
+            model,
+            lang,
+        } => {
+            use emeetctl_core::record::{Audio, PcOptions};
+            let o = PcOptions {
+                video,
+                system: !no_system,
+                mic: Audio::parse(mic.as_deref())?,
+                output,
+                seconds,
+                fps,
+            };
+            let t = (!no_transcribe).then_some(emeetctl_core::transcribe::Options {
+                model,
+                language: lang,
+            });
+            pc(&o, t, cli.json)?
+        }
+        Cmd::Transcribe {
+            arquivo,
+            model,
+            lang,
+        } => {
+            let o = emeetctl_core::transcribe::Options {
+                model,
+                language: lang,
+            };
+            transcribe(&arquivo, &o, cli.json)?
+        }
         Cmd::Image(ImageCmd::Reset) => {
             println!("{} controles no padrão", video()?.reset_defaults()?)
         }
@@ -503,6 +582,89 @@ fn record(
     } else {
         eprintln!();
         println!("{} ({:.1} MB)", path.display(), size as f64 / 1e6);
+    }
+    Ok(())
+}
+
+fn pc(
+    o: &emeetctl_core::record::PcOptions,
+    t: Option<emeetctl_core::transcribe::Options>,
+    json: bool,
+) -> R {
+    use emeetctl_core::record::{Audio, Recorder};
+    use std::io::Write;
+    // falta o Whisper? avisa agora, não depois de uma hora de gravação
+    if t.is_some() {
+        emeetctl_core::transcribe::whisper()?;
+    }
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let s = stop.clone();
+    ctrlc_handler(move || s.store(true, std::sync::atomic::Ordering::Relaxed));
+    let mut rec = Recorder::start_pc(o)?;
+    let st = rec.status();
+    let mut what = Vec::new();
+    if let Some(v) = &st.video {
+        what.push(format!("tela {v}"));
+    }
+    if st.system {
+        what.push("som do sistema".into());
+    }
+    match &st.audio {
+        Audio::Default => what.push("microfone (entrada padrão)".into()),
+        Audio::Node(n) => what.push(format!("microfone {n}")),
+        Audio::None => {}
+    }
+    eprintln!("gravando {}", what.join(" + "));
+    eprintln!("arquivo: {}", st.path);
+    let path = loop {
+        if let Some(r) = rec.finished() {
+            break r?;
+        }
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!();
+            break rec.stop()?;
+        }
+        let t = rec.elapsed().as_secs();
+        eprint!(
+            "\r● {:02}:{:02}:{:02}  (Ctrl+C para parar)\x1b[K",
+            t / 3600,
+            t / 60 % 60,
+            t % 60
+        );
+        std::io::stderr().flush()?;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if !json {
+        eprintln!();
+        println!("{} ({:.1} MB)", path.display(), size as f64 / 1e6);
+    }
+    let transcript = match t {
+        Some(t) => {
+            eprintln!("transcrevendo com o Whisper ({})...", t.model);
+            Some(emeetctl_core::transcribe::transcribe(&path, &t)?)
+        }
+        None => None,
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "path": path, "bytes": size, "format": o.format(), "transcript": transcript })
+        );
+    } else if let Some(tr) = transcript {
+        println!("{} ({} trechos)", tr.txt.display(), tr.segments);
+    }
+    Ok(())
+}
+
+fn transcribe(path: &std::path::Path, o: &emeetctl_core::transcribe::Options, json: bool) -> R {
+    eprintln!("transcrevendo com o Whisper ({})...", o.model);
+    let tr = emeetctl_core::transcribe::transcribe(path, o)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&tr)?);
+    } else {
+        println!("{} ({} trechos)", tr.txt.display(), tr.segments);
+        println!("{}", tr.srt.display());
     }
     Ok(())
 }

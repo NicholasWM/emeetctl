@@ -1,7 +1,7 @@
 //! Servidor MCP por stdio (JSON-RPC 2.0, uma mensagem por linha).
 //! Cada chamada abre o dispositivo, age e fecha: a câmera pode ser desconectada entre chamadas.
 
-use emeetctl_core::record::{Audio, Options, Recorder};
+use emeetctl_core::record::{Audio, Options, PcOptions, Recorder};
 use emeetctl_core::{light, ControlKind, Light, Mic, Mode, Target, Video};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
@@ -133,6 +133,34 @@ fn tools() -> Value {
                     "seconds": { "type": "integer", "minimum": 1, "description": "Para sozinha depois de N segundos." },
                     "output": { "type": "string", "description": "Caminho do arquivo. Sem ele: pasta de vídeos ou de música do usuário, com data e hora no nome." }
                 }
+            }
+        },
+        {
+            "name": "start_pc_recording",
+            "description": "Começa a gravar o PC: o som que sai do computador (chamada, vídeo) e o microfone, cada um na sua trilha, num MKA; com video=true grava também a tela inteira (X11) num MKV, pela GPU (NVENC) quando dá. Uma gravação por vez; pare com stop_recording e transcreva com transcribe_recording.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "video": { "type": "boolean", "description": "Grava também a tela. Padrão: false (só áudio)." },
+                    "system": { "type": "boolean", "description": "Grava o som do sistema. Padrão: true." },
+                    "mic": { "type": "string", "description": "Microfone: 'padrao' (o normal), 'limpo', 'nenhum' (só o sistema) ou um microfone de list_microphones." },
+                    "fps": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Quadros por segundo da tela. Padrão: 15." },
+                    "seconds": { "type": "integer", "minimum": 1, "description": "Para sozinha depois de N segundos." },
+                    "output": { "type": "string", "description": "Caminho do arquivo (.mka ou .mkv). Sem ele: pasta de música ou de vídeos, pc-<data e hora>." }
+                }
+            }
+        },
+        {
+            "name": "transcribe_recording",
+            "description": "Transcreve uma gravação com o Whisper, localmente (GPU quando tem). Cada trilha é transcrita sozinha e os trechos saem intercalados pelo tempo com o nome da trilha (Microfone, Sistema), num .txt e num .srt ao lado do arquivo. Demora: cerca de 1 min por 10 min de áudio na GPU.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Arquivo gravado (o path de stop_recording)." },
+                    "model": { "type": "string", "description": "Modelo do Whisper. Padrão: large-v3." },
+                    "language": { "type": "string", "description": "Idioma da fala (pt, en...). Sem ele: detecta por trilha." }
+                },
+                "required": ["path"]
             }
         },
         {
@@ -324,6 +352,44 @@ fn call(name: &str, a: &Value) -> R {
             st["recording"] = json!(true);
             *rec = Some(r);
             Ok(st)
+        }
+        "start_pc_recording" => {
+            let mut rec = RECORDING.lock().unwrap();
+            if let Some(r) = rec.as_mut() {
+                if r.finished().is_none() {
+                    return Err(format!("já está gravando em {}", r.path().display()));
+                }
+            }
+            let flag = |k: &str, d: bool| a.get(k).and_then(Value::as_bool).unwrap_or(d);
+            let mut o = PcOptions {
+                video: flag("video", false),
+                system: flag("system", true),
+                mic: Audio::parse(a.get("mic").and_then(Value::as_str)).map_err(e)?,
+                ..PcOptions::default()
+            };
+            if let Some(f) = a.get("fps").and_then(Value::as_u64) {
+                o.fps = f.clamp(1, 60) as u32;
+            }
+            o.seconds = a.get("seconds").and_then(Value::as_u64).map(|s| s as u32);
+            o.output = a.get("output").and_then(Value::as_str).map(Into::into);
+            let r = Recorder::start_pc(&o).map_err(e)?;
+            let mut st = json!(r.status());
+            st["recording"] = json!(true);
+            *rec = Some(r);
+            Ok(st)
+        }
+        "transcribe_recording" => {
+            let path = a
+                .get("path")
+                .and_then(Value::as_str)
+                .ok_or("argumento 'path' ausente")?;
+            let mut o = emeetctl_core::transcribe::Options::default();
+            if let Some(m) = a.get("model").and_then(Value::as_str) {
+                o.model = m.into();
+            }
+            o.language = a.get("language").and_then(Value::as_str).map(Into::into);
+            let t = emeetctl_core::transcribe::transcribe(path.as_ref(), &o).map_err(e)?;
+            Ok(json!(t))
         }
         "stop_recording" => {
             let r = RECORDING

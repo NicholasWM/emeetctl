@@ -10,6 +10,10 @@
 //!   S600L direto em MJPEG 1280×720 a 30 fps, o formato em que o zoom funciona.
 //! - Áudio: qualquer entrada do PipeWire pelo nome do nó, via pipewire-pulse
 //!   (a padrão do sistema, um microfone USB ou a entrada limpa).
+//! - Gravação do PC ([`PcOptions`]): o som que sai do computador (monitor da
+//!   saída padrão) e o microfone, cada um na sua trilha, e a tela inteira
+//!   (X11) se pedir vídeo. Trilhas separadas deixam a transcrição dizer quem
+//!   falou ([`crate::transcribe`]).
 
 use crate::mic::{self, clean, PipeWire};
 use crate::virtualcam;
@@ -33,6 +37,8 @@ pub enum Format {
     Mp3,
     Opus,
     M4a,
+    /// Matroska só de áudio: várias trilhas Opus (gravação do PC).
+    Mka,
 }
 
 impl Format {
@@ -55,6 +61,7 @@ impl Format {
             Format::Mp3 => "mp3",
             Format::Opus => "opus",
             Format::M4a => "m4a",
+            Format::Mka => "mka",
         }
     }
 
@@ -73,6 +80,7 @@ impl Format {
             Format::Mp3 => "MP3",
             Format::Opus => "Opus",
             Format::M4a => "M4A",
+            Format::Mka => "MKA",
         }
     }
 
@@ -87,6 +95,7 @@ impl Format {
             Format::Mp3 => "compatível com tudo, ~190 kb/s",
             Format::Opus => "o melhor para voz, arquivo pequeno (128 kb/s)",
             Format::M4a => "AAC: o padrão de áudio do iPhone e do Mac",
+            Format::Mka => "Opus em trilhas separadas (sistema e microfone)",
         }
     }
 
@@ -138,6 +147,7 @@ impl Format {
             Format::Mp3 => &["-c:a", "libmp3lame", "-q:a", "2"],
             Format::Opus => &["-c:a", "libopus", "-b:a", "128k"],
             Format::M4a => &["-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart"],
+            Format::Mka => &["-c:a", "libopus", "-b:a", "96k"],
         }
     }
 }
@@ -243,9 +253,67 @@ pub struct RecordingStatus {
     pub path: String,
     pub format: Format,
     pub seconds: f64,
-    /// Nó de vídeo lido (`/dev/videoN`), se for vídeo.
+    /// Nó de vídeo lido (`/dev/videoN`) ou a tela (`:1`), se for vídeo.
     pub video: Option<String>,
     pub audio: Audio,
+    /// Grava também o som que sai do computador (gravação do PC).
+    pub system: bool,
+}
+
+/// Gravação do PC: o som do sistema e o microfone, e a tela se `video`.
+#[derive(Debug, Clone)]
+pub struct PcOptions {
+    /// Grava a tela inteira (X11) num MKV; sem isso, só áudio num MKA.
+    pub video: bool,
+    /// O som que sai do computador (chamada, vídeo, música).
+    pub system: bool,
+    /// O microfone; `Audio::None` deixa só o sistema.
+    pub mic: Audio,
+    pub output: Option<PathBuf>,
+    pub seconds: Option<u32>,
+    /// Quadros por segundo da tela.
+    pub fps: u32,
+}
+
+impl Default for PcOptions {
+    fn default() -> PcOptions {
+        PcOptions {
+            video: false,
+            system: true,
+            mic: Audio::Default,
+            output: None,
+            seconds: None,
+            fps: 15,
+        }
+    }
+}
+
+impl PcOptions {
+    pub fn format(&self) -> Format {
+        if self.video {
+            Format::Mkv
+        } else {
+            Format::Mka
+        }
+    }
+}
+
+/// Nome da trilha de áudio, na ordem em que entram no arquivo: o microfone
+/// primeiro, depois o sistema. A transcrição usa esse nome para dizer quem falou.
+pub const TRACK_MIC: &str = "Microfone";
+pub const TRACK_SYSTEM: &str = "Sistema";
+
+/// A tela do X11 (`$DISPLAY`). No Wayland o x11grab só vê janelas do XWayland.
+pub fn screen() -> Result<String> {
+    if std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland") {
+        return Err(Error::Invalid(
+            "gravar a tela precisa de uma sessão X11 (no Wayland, só áudio)".into(),
+        ));
+    }
+    std::env::var("DISPLAY")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .ok_or_else(|| Error::Invalid("sem $DISPLAY: não há tela X11 para gravar".into()))
 }
 
 /// Nó de vídeo para gravar. Com a câmera virtual ligada, a primeira saída livre,
@@ -302,11 +370,15 @@ pub fn default_dir(video: bool) -> PathBuf {
 
 /// `emeetctl-2026-10-17_23-41-05.mp4`, na hora local.
 fn file_name(format: Format) -> String {
+    stamped("emeetctl", format)
+}
+
+fn stamped(prefix: &str, format: Format) -> String {
     let now = unsafe { libc::time(std::ptr::null_mut()) };
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     unsafe { libc::localtime_r(&now, &mut tm) };
     format!(
-        "emeetctl-{:04}-{:02}-{:02}_{:02}-{:02}-{:02}.{}",
+        "{prefix}-{:04}-{:02}-{:02}_{:02}-{:02}-{:02}.{}",
         tm.tm_year + 1900,
         tm.tm_mon + 1,
         tm.tm_mday,
@@ -366,13 +438,89 @@ fn ffmpeg_args(o: &Options, video: Option<(&Path, bool)>, path: &Path) -> Vec<St
     a
 }
 
+/// Linha de comando do ffmpeg da gravação do PC. `screen` é a tela do X11 e
+/// `h264` o codificador do vídeo (`h264_nvenc` na GPU NVIDIA, ou `libx264`).
+fn pc_args(o: &PcOptions, screen: Option<&str>, h264: &str, path: &Path) -> Vec<String> {
+    let mut a: Vec<String> = ["-hide_banner", "-loglevel", "error", "-nostats", "-n"]
+        .map(String::from)
+        .to_vec();
+    if let Some(display) = screen {
+        a.extend([
+            "-thread_queue_size".into(),
+            "512".into(),
+            "-f".into(),
+            "x11grab".into(),
+            "-framerate".into(),
+            o.fps.to_string(),
+            "-draw_mouse".into(),
+            "1".into(),
+            "-i".into(),
+            display.into(),
+        ]);
+    }
+    let mut tracks = Vec::new();
+    if let Some(src) = o.mic.pulse_name() {
+        tracks.push((src, TRACK_MIC));
+    }
+    if o.system {
+        // o monitor da saída padrão: tudo o que o computador está tocando
+        tracks.push(("@DEFAULT_MONITOR@", TRACK_SYSTEM));
+    }
+    for (src, title) in &tracks {
+        a.extend(
+            [
+                "-thread_queue_size",
+                "512",
+                "-f",
+                "pulse",
+                "-name",
+                "emeetctl",
+                "-stream_name",
+                title,
+                "-i",
+                src,
+            ]
+            .map(String::from),
+        );
+    }
+    let first_audio = usize::from(screen.is_some());
+    if screen.is_some() {
+        a.extend(["-map", "0:v"].map(String::from));
+    }
+    for i in 0..tracks.len() {
+        a.extend(["-map".into(), format!("{}:a", first_audio + i)]);
+    }
+    for (i, (_, title)) in tracks.iter().enumerate() {
+        a.extend([format!("-metadata:s:a:{i}"), format!("title={title}")]);
+    }
+    if let Some(s) = o.seconds {
+        a.extend(["-t".into(), s.to_string()]);
+    }
+    if screen.is_some() {
+        a.extend(["-c:v".into(), h264.into()]);
+        a.extend(
+            match h264 {
+                "h264_nvenc" => ["-preset", "p4", "-cq", "30"],
+                _ => ["-preset", "veryfast", "-crf", "28"],
+            }
+            .map(String::from),
+        );
+        a.extend(["-pix_fmt", "yuv420p"].map(String::from));
+    }
+    a.extend(Format::Mka.codec_args().iter().map(|s| s.to_string()));
+    a.push(path.display().to_string());
+    a
+}
+
 pub struct Recorder {
     child: Child,
     stdin: Option<ChildStdin>,
     path: PathBuf,
     format: Format,
     audio: Audio,
-    video: Option<PathBuf>,
+    /// Nó de vídeo (`/dev/videoN`) ou tela (`:1`).
+    video: Option<String>,
+    system: bool,
     started: Instant,
     stderr: Arc<Mutex<String>>,
     done: bool,
@@ -399,12 +547,75 @@ impl Recorder {
                 dir.join(file_name(o.format))
             }
         };
+        let args = ffmpeg_args(o, video.as_deref().map(|v| (v, is_virtual)), &path);
+        Recorder::spawn(
+            &args,
+            path,
+            o.format,
+            o.audio.clone(),
+            video.map(|v| v.display().to_string()),
+            false,
+        )
+    }
+
+    /// Começa a gravar o PC: o som do sistema e o microfone em trilhas
+    /// separadas, e a tela se `o.video`. O vídeo sai pela GPU (NVENC) quando dá.
+    pub fn start_pc(o: &PcOptions) -> Result<Recorder> {
+        if !o.system && o.mic == Audio::None {
+            return Err(Error::Invalid(
+                "sem som do sistema e sem microfone não há o que gravar".into(),
+            ));
+        }
+        let screen = match o.video {
+            true => Some(screen()?),
+            false => None,
+        };
+        let format = o.format();
+        let path = match &o.output {
+            Some(p) => p.clone(),
+            None => {
+                let dir = default_dir(o.video);
+                std::fs::create_dir_all(&dir)?;
+                dir.join(stamped("pc", format))
+            }
+        };
         if path.exists() {
             return Err(Error::Invalid(format!("{} já existe", path.display())));
         }
-        let args = ffmpeg_args(o, video.as_deref().map(|v| (v, is_virtual)), &path);
+        let start = |h264: &str| {
+            Recorder::spawn(
+                &pc_args(o, screen.as_deref(), h264, &path),
+                path.clone(),
+                format,
+                o.mic.clone(),
+                screen.clone(),
+                o.system,
+            )
+        };
+        match start("h264_nvenc") {
+            // sem GPU NVIDIA (ou sem NVENC no ffmpeg): codifica na CPU
+            Err(_) if screen.is_some() => {
+                // o ffmpeg abre o arquivo antes de iniciar o codificador
+                let _ = std::fs::remove_file(&path);
+                start("libx264")
+            }
+            r => r,
+        }
+    }
+
+    fn spawn(
+        args: &[String],
+        path: PathBuf,
+        format: Format,
+        audio: Audio,
+        video: Option<String>,
+        system: bool,
+    ) -> Result<Recorder> {
+        if path.exists() {
+            return Err(Error::Invalid(format!("{} já existe", path.display())));
+        }
         let mut child = Command::new("ffmpeg")
-            .args(&args)
+            .args(args)
             // grupo próprio: o Ctrl+C do terminal não chega nele, quem para é o `q`
             .process_group(0)
             .stdin(Stdio::piped())
@@ -430,9 +641,10 @@ impl Recorder {
             stdin: child.stdin.take(),
             child,
             path,
-            format: o.format,
-            audio: o.audio.clone(),
+            format,
+            audio,
             video,
+            system,
             started: Instant::now(),
             stderr,
             done: false,
@@ -457,9 +669,9 @@ impl Recorder {
         self.format
     }
 
-    /// Nó de vídeo que a gravação está lendo.
+    /// Nó de vídeo que a gravação está lendo (ou a tela, na gravação do PC).
     pub fn video(&self) -> Option<&Path> {
-        self.video.as_deref()
+        self.video.as_deref().map(Path::new)
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -471,8 +683,9 @@ impl Recorder {
             path: self.path.display().to_string(),
             format: self.format,
             seconds: self.elapsed().as_secs_f64(),
-            video: self.video.as_ref().map(|v| v.display().to_string()),
+            video: self.video.clone(),
             audio: self.audio.clone(),
+            system: self.system,
         }
     }
 
@@ -586,6 +799,37 @@ mod tests {
             Path::new("/x.webm"),
         );
         assert!(!a.join(" ").contains("pulse"));
+    }
+
+    #[test]
+    fn pc_audio_only_puts_mic_and_system_in_separate_tracks() {
+        let o = PcOptions::default();
+        assert_eq!(o.format(), Format::Mka);
+        let a = pc_args(&o, None, "h264_nvenc", Path::new("/x.mka")).join(" ");
+        assert!(!a.contains("x11grab"));
+        assert!(a.contains("-stream_name Microfone -i default"));
+        assert!(a.contains("-stream_name Sistema -i @DEFAULT_MONITOR@"));
+        assert!(a.contains("-map 0:a -map 1:a"));
+        assert!(a.contains("-metadata:s:a:0 title=Microfone -metadata:s:a:1 title=Sistema"));
+        assert!(!a.contains("-c:v"));
+        assert!(a.ends_with("-c:a libopus -b:a 96k /x.mka"));
+    }
+
+    #[test]
+    fn pc_with_screen_maps_video_first() {
+        let o = PcOptions {
+            video: true,
+            mic: Audio::None,
+            seconds: Some(3),
+            ..PcOptions::default()
+        };
+        assert_eq!(o.format(), Format::Mkv);
+        let a = pc_args(&o, Some(":1"), "h264_nvenc", Path::new("/x.mkv")).join(" ");
+        assert!(a.contains("-f x11grab -framerate 15 -draw_mouse 1 -i :1"));
+        assert!(a.contains("-map 0:v -map 1:a -metadata:s:a:0 title=Sistema"));
+        assert!(a.contains("-t 3 -c:v h264_nvenc -preset p4 -cq 30"));
+        let cpu = pc_args(&o, Some(":1"), "libx264", Path::new("/x.mkv")).join(" ");
+        assert!(cpu.contains("-c:v libx264 -preset veryfast -crf 28"));
     }
 
     #[test]
