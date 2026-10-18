@@ -7,9 +7,9 @@
 <meta name="theme-color" content="#121417" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f6f7f8" media="(prefers-color-scheme: light)">
 <title>emeetctl — open source Linux control for the EMEET SmartCam S600L</title>
-<meta name="description" content="Ring light, image controls and live preview for the EMEET SmartCam S600L on Linux. GUI, CLI and MCP server. MIT OR Apache-2.0.">
+<meta name="description" content="Ring light, image controls, microphones, recording and live preview for the EMEET SmartCam S600L on Linux. GUI, CLI and MCP server. MIT OR Apache-2.0.">
 <meta property="og:title" content="emeetctl — Linux control for the EMEET SmartCam S600L">
-<meta property="og:description" content="Ring light, image controls and live preview on Linux, where the vendor app only exists for Windows and macOS. GUI, CLI and MCP server.">
+<meta property="og:description" content="Ring light, image controls, microphones and recording on Linux, where the vendor app only exists for Windows and macOS. GUI, CLI and MCP server.">
 <meta property="og:type" content="website">
 <meta property="og:image" content="img/screen-luz.png">
 <link id="favicon" rel="icon" href="img/logo.png">
@@ -212,7 +212,7 @@ footer .links a{min-height:44px;display:inline-flex;align-items:center}
     <img class="hero-art" src="img/hero-ring.jpg" width="560" height="560" alt="" aria-hidden="true">
     <span class="eyebrow">Open source · MIT OR Apache-2.0</span>
     <h1 id="title"><span class="name">emeetctl</span><span class="rest">Open source Linux control for the EMEET&nbsp;SmartCam&nbsp;S600L</span></h1>
-    <p class="lede">Ring light, image controls and live preview <strong>on Linux</strong>, where the vendor app (EMEET Studio) only exists for Windows and macOS.</p>
+    <p class="lede">Ring light, image controls, microphones, recording and live preview <strong>on Linux</strong>, where the vendor app (EMEET Studio) only exists for Windows and macOS.</p>
     <div class="ctas">
       <a class="btn primary" href="#download">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg>
@@ -224,8 +224,8 @@ footer .links a{min-height:44px;display:inline-flex;align-items:center}
       </a>
     </div>
     <figure class="shot">
-      <img src="img/screen-luz.png" width="1180" height="757"
-        alt="emeetctl window, Light tab: live preview area on the left; on the right, toggles for the fill light and the RGB ring, mode buttons (cool, warm, balanced, color, rainbow), color presets with a hex field set to ff3c00, and a brightness slider at 95%.">
+      <img src="img/screen-luz.png" width="1180" height="720"
+        alt="emeetctl window, Light tab: preview area on the left; on the right, the five tabs (Light, Image, Microphone, Record, Device), toggles for the fill light and the RGB ring, mode buttons (cool, warm, balanced, color, rainbow), color presets with a hex field, and a brightness slider at 42%.">
       <figcaption>The Light tab. The app interface is currently in Brazilian Portuguese.</figcaption>
     </figure>
 
@@ -243,7 +243,7 @@ footer .links a{min-height:44px;display:inline-flex;align-items:center}
 <div class="wrap">
   <section id="features" aria-labelledby="h-features">
     <h2 id="h-features">Features</h2>
-    <p class="sub">Everything the S600L exposes for the light and the image, from one native Linux app.</p>
+    <p class="sub">Everything the S600L exposes for the light, the image and the microphone, plus recording, from one native Linux app.</p>
 
     <div class="grid two" style="margin-bottom:14px">
       <div class="card">
@@ -283,9 +283,45 @@ footer .links a{min-height:44px;display:inline-flex;align-items:center}
         <p style="margin-top:14px">"Auto" switches unlock the matching manual control: turn auto exposure off and the exposure slider comes alive.</p>
       </div>
       <figure>
-        <img src="img/screen-imagem.png" width="1180" height="757" loading="lazy"
-          alt="emeetctl window, Image tab: exposure section with the Auto switch on and the exposure time slider locked, gain and backlight compensation sliders; white balance with Auto on and the temperature slider locked at 5000 K; brightness slider at 140.">
+        <img src="img/screen-imagem.png" width="1180" height="720" loading="lazy"
+          alt="emeetctl window, Image tab: exposure section with the Auto switch on and the exposure time slider locked, gain and backlight compensation sliders; white balance with Auto on and the temperature slider locked at 4750 K; brightness slider at 130.">
         <figcaption>The Image tab.</figcaption>
+      </figure>
+    </div>
+
+    <div class="split rev" style="margin-top:14px">
+      <div class="card">
+        <span class="tag">Microphones</span>
+        <h3>The camera mic and any USB mic</h3>
+        <ul>
+          <li>The S600L mic, a Yeti Nano or any other USB mic: gain, mute and a live level meter.</li>
+          <li>Headphone volume for mics with a headphone jack (Yeti Nano).</li>
+          <li>Make it the system default input, and see which apps are recording from it.</li>
+          <li><span class="hl">Clean microphone:</span> a new input "&lt;mic&gt; (limpo)" with WebRTC noise suppression and speaker echo cancellation. No PipeWire restart.</li>
+        </ul>
+      </div>
+      <figure>
+        <img src="img/screen-microfone.png" width="1180" height="720" loading="lazy"
+          alt="emeetctl window, Microphone tab: a picker between the S600L (camera) and the Yeti Nano, with the Yeti Nano selected; its card has an On switch, a gain slider at 0 dB and a level meter; a Headphones card with a volume slider at -11.5 dB; and the Clean microphone card with noise and echo reduction on.">
+        <figcaption>The Microphone tab.</figcaption>
+      </figure>
+    </div>
+
+    <div class="split" style="margin-top:14px">
+      <div class="card">
+        <span class="tag">Recording</span>
+        <h3>Record video or audio, in the format you pick</h3>
+        <ul class="chips" aria-label="Recording formats">
+          <li>MP4 (H.264 + AAC)</li><li>MKV (H.264 + Opus)</li><li>WebM (VP9 + Opus)</li>
+          <li>WAV</li><li>FLAC</li><li>MP3</li><li>Opus</li><li>M4A</li>
+        </ul>
+        <p style="margin-top:14px">Pick the sound source: the default input, the clean mic, a specific mic, or none. With the virtual camera on, recording uses a free output, so <span class="hl">Meet and the preview keep working</span> at the same time.</p>
+        <p>Through <code>ffmpeg</code>. Stopping, even with Ctrl+C, always closes the file properly.</p>
+      </div>
+      <figure>
+        <img src="img/screen-gravar.png" width="1180" height="720" loading="lazy"
+          alt="emeetctl window, Record tab: Video and sound or Audio only, format buttons MP4, MKV and WebM with a hint about each, a Sound picker set to the system default input, a big Record button and the destination folder.">
+        <figcaption>The Record tab.</figcaption>
       </figure>
     </div>
 
@@ -295,7 +331,7 @@ footer .links a{min-height:44px;display:inline-flex;align-items:center}
       <ul>
         <li><code>emeetctl-gui</code> — the desktop app.</li>
         <li><code>emeetctl</code> — the CLI, with <code>--json</code> output for scripts.</li>
-        <li><code>emeetctl-mcp</code> — an <a href="#mcp">MCP server</a>, so AI assistants (Claude Code and other MCP clients) can control the light and the image.</li>
+        <li><code>emeetctl-mcp</code> — an <a href="#mcp">MCP server</a>, so AI assistants (Claude Code and other MCP clients) can control the light, the image, the microphones and recording.</li>
       </ul>
     </div>
 
@@ -307,9 +343,9 @@ footer .links a{min-height:44px;display:inline-flex;align-items:center}
         <p>Firmware updates are <span class="hl">deliberately unsupported</span>, and the Device tab says so.</p>
       </div>
       <figure>
-        <img src="img/screen-dispositivo.png" width="1180" height="757" loading="lazy"
-          alt="emeetctl window, Device tab: product EMEET SmartCam S600L, serial number, firmware 1.0.19, light channel /dev/hidraw0, video /dev/video1, and a note that firmware updates are not supported on purpose.">
-        <figcaption>The Device tab.</figcaption>
+        <img src="img/screen-dispositivo.png" width="1180" height="720" loading="lazy"
+          alt="emeetctl window, Device tab: product EMEET SmartCam S600L, serial number (blurred), firmware 1.0.19, light channel /dev/hidraw0, video /dev/video1, and the virtual camera card: on, sending to three outputs (emeetctl Camera, Camera 2, Camera 3), all free.">
+        <figcaption>The Device tab, with the virtual camera.</figcaption>
       </figure>
     </div>
   </section>
