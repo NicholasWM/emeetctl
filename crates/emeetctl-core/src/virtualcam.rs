@@ -95,6 +95,39 @@ pub fn find_devices() -> Vec<PathBuf> {
     found.into_iter().map(|(_, p)| p).collect()
 }
 
+/// Serviço de usuário da câmera virtual.
+pub const UNIT: &str = "emeetctl-virtualcam.service";
+
+/// O serviço da câmera virtual está rodando (as saídas têm imagem).
+pub fn service_active() -> bool {
+    std::process::Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet", UNIT])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// Programas lendo a saída `output`, fora o próprio serviço (que fica com todas
+/// as saídas abertas para escrever nelas).
+pub fn readers(output: &Path) -> Vec<crate::CameraUser> {
+    let writer = std::process::Command::new("systemctl")
+        .args(["--user", "show", "--property=MainPID", "--value", UNIT])
+        .output()
+        .ok()
+        .and_then(|o| {
+            String::from_utf8_lossy(&o.stdout)
+                .trim()
+                .parse::<u32>()
+                .ok()
+        })
+        .filter(|&p| p != 0);
+    let mut users = crate::camera_users(output);
+    for u in &mut users {
+        u.pids.retain(|&p| Some(p) != writer);
+    }
+    users.retain(|u| !u.pids.is_empty());
+    users
+}
+
 /// O nó da primeira saída, se já existir.
 pub fn find_device() -> Option<PathBuf> {
     find_devices().into_iter().next()
@@ -197,7 +230,12 @@ pub fn run(
     let mut yuyv = vec![0u8; (WIDTH * HEIGHT * 2) as usize];
     let (mut frames, mut since) = (0u32, Instant::now());
     while !stop.load(Ordering::Relaxed) {
-        let (buf, meta) = stream.next()?;
+        let (buf, meta) = match stream.next() {
+            // o SIGTERM do `systemctl stop` interrompe a espera pelo quadro:
+            // volta ao laço, que vê o `stop` e sai limpo
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            r => r?,
+        };
         let jpeg = &buf[..(meta.bytesused as usize).min(buf.len())];
         if !mjpeg_to_yuyv(jpeg, WIDTH as usize, HEIGHT as usize, &mut yuyv) {
             continue; // quadro corrompido: pula, não derruba a câmera dos outros

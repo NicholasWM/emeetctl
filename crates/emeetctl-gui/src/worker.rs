@@ -60,7 +60,7 @@ pub struct VirtualOutput {
     pub users: Option<String>,
 }
 
-const UNIT: &str = "emeetctl-virtualcam.service";
+use emeetctl_core::virtualcam::UNIT;
 
 fn systemctl(args: &[&str]) -> Result<String, String> {
     let out = std::process::Command::new("systemctl")
@@ -87,7 +87,7 @@ fn virtualcam_state() -> VirtualCam {
             .enumerate()
             .map(|(i, p)| VirtualOutput {
                 label: emeetctl_core::virtualcam::label(i),
-                users: emeetctl_core::describe_users(&emeetctl_core::camera_users(&p)),
+                users: emeetctl_core::describe_users(&emeetctl_core::virtualcam::readers(&p)),
                 device: p.display().to_string(),
             })
             .collect(),

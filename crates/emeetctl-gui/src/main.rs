@@ -6,8 +6,10 @@ mod worker;
 
 use eframe::egui::{self, Color32, RichText};
 use emeetctl_core::mic::{self, Meter};
+use emeetctl_core::record::{self, Audio, Format, Options, Recorder};
 use emeetctl_core::{light, Control, ControlKind, Mode, Target};
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 use theme::{
@@ -94,6 +96,7 @@ enum Tab {
     Light,
     Image,
     Mic,
+    Record,
     Device,
 }
 
@@ -130,6 +133,15 @@ struct App {
     meter_error: Option<String>,
     /// Pico com queda lenta, para a barra não piscar.
     shown_db: f32,
+    /// Gravação em andamento (o ffmpeg roda à parte; a janela só acompanha).
+    rec: Option<Recorder>,
+    rec_video: bool,
+    rec_video_format: Format,
+    rec_audio_format: Format,
+    /// Fonte do som, como em `emeetctl record --mic`: padrao, limpo, nenhum ou a placa.
+    rec_audio: String,
+    rec_last: Option<PathBuf>,
+    rec_error: Option<String>,
 }
 
 impl App {
@@ -167,6 +179,13 @@ impl App {
             meter: None,
             meter_error: None,
             shown_db: mic::FLOOR_DB,
+            rec: None,
+            rec_video: true,
+            rec_video_format: Format::Mp4,
+            rec_audio_format: Format::Mp3,
+            rec_audio: "padrao".into(),
+            rec_last: None,
+            rec_error: None,
         }
     }
 
@@ -280,6 +299,8 @@ impl App {
             self.texture = None;
         }
         self.preview_src = video.clone();
+        // Sem a câmera virtual, a gravação de vídeo fica com a câmera física.
+        let wanted = wanted && self.recording_from().is_none_or(|r| Some(r) != video);
         match (wanted, video, self.preview.is_some()) {
             (true, Some(path), false) if self.preview_error.is_none() => {
                 self.preview = Some(preview::Preview::start(path.into(), ctx.clone()))
@@ -324,6 +345,10 @@ impl App {
             (Some(t), true) => {
                 egui::Image::new(t).corner_radius(14.0).paint_at(ui, rect);
                 theme::chip(ui, rect.min + egui::vec2(12.0, 12.0), "AO VIVO", Some(LIVE));
+                if let Some(r) = &self.rec {
+                    let pos = egui::pos2(rect.left() + 92.0, rect.top() + 12.0);
+                    theme::chip(ui, pos, &format!("REC {}", clock(r.elapsed())), Some(LIVE));
+                }
                 if let Some(f) = &self.preview_format {
                     let pos = egui::pos2(rect.left() + 12.0, rect.bottom() - 36.0);
                     theme::chip(ui, pos, f, None);
@@ -331,6 +356,10 @@ impl App {
             }
             _ => {
                 let (msg, color) = match (&self.preview_error, self.preview_on, self.focused) {
+                    _ if self.recording_from().is_some_and(|r| Some(r) == self.preview_src) => (
+                        "Gravando: sem a câmera virtual, a câmera fica só com a gravação".to_string(),
+                        MUTED,
+                    ),
                     (Some(e), _, _) => match self.in_use_by() {
                         Some(who) => (format!("A câmera está em uso por {who}"), WARN),
                         None => (format!("Sem prévia: {e}"), WARN),
@@ -844,6 +873,204 @@ impl App {
         }
     }
 
+    /// Nó de vídeo que a gravação está lendo.
+    fn recording_from(&self) -> Option<String> {
+        self.rec
+            .as_ref()
+            .and_then(|r| r.video())
+            .map(|p| p.display().to_string())
+    }
+
+    fn rec_format(&self) -> Format {
+        if self.rec_video {
+            self.rec_video_format
+        } else {
+            self.rec_audio_format
+        }
+    }
+
+    fn start_recording(&mut self) {
+        let format = self.rec_format();
+        let virtual_on = self.snap.as_ref().is_some_and(|s| s.virtualcam.active);
+        let mut o = Options::new(format);
+        if format.has_video() {
+            if virtual_on {
+                // a prévia fica na saída dela; a gravação pega outra
+                o.avoid = self
+                    .preview
+                    .as_ref()
+                    .and(self.preview_src.as_ref())
+                    .map(PathBuf::from);
+            } else {
+                // só um programa lê a câmera física: a prévia solta para a gravação
+                self.preview = None;
+                self.texture = None;
+            }
+        }
+        let started = Audio::parse(Some(&self.rec_audio)).and_then(|a| {
+            o.audio = a;
+            Recorder::start(&o)
+        });
+        match started {
+            Ok(r) => {
+                self.rec = Some(r);
+                self.rec_error = None;
+            }
+            Err(e) => self.rec_error = Some(e.to_string()),
+        }
+    }
+
+    fn stop_recording(&mut self) {
+        if let Some(r) = self.rec.take() {
+            match r.stop() {
+                Ok(p) => self.rec_last = Some(p),
+                Err(e) => self.rec_error = Some(e.to_string()),
+            }
+        }
+    }
+
+    /// Gravação que terminou sozinha (tempo, erro, câmera desconectada).
+    fn sync_recording(&mut self, ctx: &egui::Context) {
+        let Some(r) = self.rec.as_mut() else { return };
+        match r.finished() {
+            Some(Ok(p)) => self.rec_last = Some(p),
+            Some(Err(e)) => self.rec_error = Some(e.to_string()),
+            None => {
+                ctx.request_repaint_after(Duration::from_millis(250));
+                return;
+            }
+        }
+        self.rec = None;
+    }
+
+    /// Fontes de som: (rótulo, seleção de `Audio::parse`).
+    fn audio_choices(&self) -> Vec<(String, String)> {
+        let mut v = vec![(
+            "Entrada padrão do sistema".to_string(),
+            "padrao".to_string(),
+        )];
+        if let Some(s) = &self.snap {
+            if s.clean.active {
+                v.push(("Microfone limpo".into(), "limpo".into()));
+            }
+            for m in &s.mics {
+                v.push((m.short(), m.card.to_string()));
+            }
+        }
+        if self.rec_video {
+            v.push(("Sem som".into(), "nenhum".into()));
+        }
+        v
+    }
+
+    fn record_tab(&mut self, ui: &mut egui::Ui) {
+        let recording = self.rec.is_some();
+        card(ui, "Gravar", |ui| {
+            ui.add_enabled_ui(!recording, |ui| {
+                if let Some(i) = segmented(
+                    ui,
+                    &["Vídeo e som", "Só áudio"],
+                    Some(!self.rec_video as usize),
+                ) {
+                    self.rec_video = i == 0;
+                    if !self.rec_video && self.rec_audio == "nenhum" {
+                        self.rec_audio = "padrao".into();
+                    }
+                }
+                ui.add_space(6.0);
+                let formats: &[Format] = if self.rec_video {
+                    &Format::VIDEO
+                } else {
+                    &Format::AUDIO
+                };
+                let names: Vec<&str> = formats.iter().map(|f| f.name()).collect();
+                let cur = self.rec_format();
+                if let Some(i) = segmented(ui, &names, formats.iter().position(|f| *f == cur)) {
+                    match self.rec_video {
+                        true => self.rec_video_format = formats[i],
+                        false => self.rec_audio_format = formats[i],
+                    }
+                }
+                ui.label(RichText::new(self.rec_format().hint()).small().color(MUTED));
+                ui.add_space(8.0);
+                let choices = self.audio_choices();
+                let shown = choices
+                    .iter()
+                    .find(|(_, sel)| *sel == self.rec_audio)
+                    .map_or("Entrada padrão do sistema".to_string(), |(l, _)| l.clone());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Som").color(MUTED));
+                    egui::ComboBox::from_id_salt("rec-audio")
+                        .selected_text(shown)
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| {
+                            for (label, sel) in &choices {
+                                ui.selectable_value(&mut self.rec_audio, sel.clone(), label);
+                            }
+                        });
+                });
+            });
+            ui.add_space(10.0);
+            let (text, fill) = match &self.rec {
+                Some(r) => (format!("Parar  ·  {}", clock(r.elapsed())), LIVE),
+                None => ("Gravar".to_string(), theme::ACCENT_DIM),
+            };
+            let button = egui::Button::new(RichText::new(text).size(16.0).strong())
+                .fill(fill)
+                .min_size(egui::vec2(ui.available_width(), 42.0));
+            if ui.add(button).clicked() {
+                if recording {
+                    self.stop_recording();
+                } else {
+                    self.start_recording();
+                }
+            }
+            ui.add_space(4.0);
+            let dir = match &self.rec {
+                Some(r) => r.path().display().to_string(),
+                None => format!("{}/", record::default_dir(self.rec_video).display()),
+            };
+            ui.label(
+                RichText::new(format!("Salva em {dir}"))
+                    .small()
+                    .color(MUTED),
+            );
+            if let Some(e) = &self.rec_error {
+                ui.label(RichText::new(e).color(WARN));
+            }
+            if self.rec_video && !self.snap.as_ref().is_some_and(|s| s.virtualcam.active) {
+                ui.label(
+                    RichText::new("Sem a câmera virtual, a câmera fica só com a gravação (sem prévia nem Meet ao mesmo tempo).")
+                        .small()
+                        .color(MUTED),
+                );
+            }
+        });
+        if let Some(p) = self.rec_last.clone() {
+            card(ui, "Última gravação", |ui| {
+                let name = p.file_name().map(|n| n.to_string_lossy().to_string());
+                let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                ui.label(RichText::new(name.unwrap_or_default()).monospace());
+                ui.label(
+                    RichText::new(format!("{:.1} MB", size as f64 / 1e6))
+                        .small()
+                        .color(MUTED),
+                );
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Abrir").clicked() {
+                        open(&p);
+                    }
+                    if ui.button("Abrir pasta").clicked() {
+                        if let Some(dir) = p.parent() {
+                            open(dir);
+                        }
+                    }
+                });
+            });
+        }
+    }
+
     fn device_tab(&self, ui: &mut egui::Ui) {
         let Some(info) = self.snap.as_ref().and_then(|s| s.info.clone()) else {
             return self.unavailable(ui, Some("câmera não encontrada".into()));
@@ -951,9 +1178,13 @@ impl App {
     }
 
     fn side(&mut self, ui: &mut egui::Ui) {
-        let tabs = [Tab::Light, Tab::Image, Tab::Mic, Tab::Device];
+        let tabs = [Tab::Light, Tab::Image, Tab::Mic, Tab::Record, Tab::Device];
         let sel = tabs.iter().position(|t| *t == self.tab);
-        if let Some(i) = segmented(ui, &["Luz", "Imagem", "Microfone", "Dispositivo"], sel) {
+        if let Some(i) = segmented(
+            ui,
+            &["Luz", "Imagem", "Microfone", "Gravar", "Dispositivo"],
+            sel,
+        ) {
             self.tab = tabs[i];
         }
         ui.add_space(4.0);
@@ -961,6 +1192,7 @@ impl App {
             Tab::Light => self.light_tab(ui),
             Tab::Image => self.image_tab(ui),
             Tab::Mic => self.mic_tab(ui),
+            Tab::Record => self.record_tab(ui),
             Tab::Device => self.device_tab(ui),
         }
     }
@@ -1022,7 +1254,7 @@ impl App {
     }
 }
 
-/// `--tab luz|imagem|microfone|dispositivo` abre direto numa aba.
+/// `--tab luz|imagem|microfone|gravar|dispositivo` abre direto numa aba.
 fn initial_tab() -> Tab {
     let args: Vec<String> = std::env::args().collect();
     match args
@@ -1033,8 +1265,25 @@ fn initial_tab() -> Tab {
     {
         Some("imagem") => Tab::Image,
         Some("microfone") => Tab::Mic,
+        Some("gravar") => Tab::Record,
         Some("dispositivo") => Tab::Device,
         _ => Tab::Light,
+    }
+}
+
+/// 00:00 (ou 1:02:03 depois de uma hora).
+fn clock(d: Duration) -> String {
+    let t = d.as_secs();
+    match t / 3600 {
+        0 => format!("{:02}:{:02}", t / 60, t % 60),
+        h => format!("{h}:{:02}:{:02}", t / 60 % 60, t % 60),
+    }
+}
+
+/// Abre o arquivo ou a pasta no programa padrão do sistema.
+fn open(p: &Path) {
+    if let Ok(mut c) = std::process::Command::new("xdg-open").arg(p).spawn() {
+        std::thread::spawn(move || c.wait());
     }
 }
 
@@ -1055,6 +1304,7 @@ impl eframe::App for App {
         while let Ok(s) = self.rx.try_recv() {
             self.absorb(s);
         }
+        self.sync_recording(ctx);
         self.sync_preview(ctx);
         self.sync_meter(ctx);
         self.header(ctx);

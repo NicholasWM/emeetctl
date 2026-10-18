@@ -22,6 +22,7 @@ The vendor app (EMEET Studio) only exists for Windows and macOS. The light proto
 | Microphones (camera mic, Yeti Nano, any USB mic): gain, mute, live level meter, make it the default input, who is recording from it | ✔ | `emeetctl mic [-d nano] list/status/gain/mute/unmute/default/level` | `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default` |
 | Clean microphone: a new input "<mic> (limpo)" with WebRTC noise suppression, high-pass and speaker echo cancellation, as a user service (no PipeWire restart) | ✔ | `emeetctl mic -d nano clean on --default` / `off` | `set_clean_mic` |
 | Headphone output of the mic (Yeti Nano): volume, mute | ✔ | `emeetctl mic -d nano headphones -12` | `set_headphones` |
+| Recording to a file: video (camera + any mic, MP4/MKV/WebM) or audio only (WAV/FLAC/MP3/Opus/M4A). With the virtual camera on, it records from a free output, so Meet and the preview keep working | ✔ | `emeetctl record -f mkv -m limpo` | `start_recording`, `stop_recording`, `get_recording` |
 | Live camera preview (MJPEG 1280×720, YUYV fallback; released when paused) | ✔ | | |
 | Device info (serial, firmware) | ✔ | `emeetctl info` | `get_status` |
 
@@ -29,7 +30,7 @@ Firmware update is deliberately **not** supported. The vendor HID channel may ca
 
 ## Install
 
-Requires Rust 1.81+ and the ALSA headers (`sudo apt install libasound2-dev`). The microphone status and meter use PipeWire (`pw-dump`, `pw-record`, `wpctl`); gain and mute work with plain ALSA.
+Requires Rust 1.81+ and the ALSA headers (`sudo apt install libasound2-dev`). The microphone status and meter use PipeWire (`pw-dump`, `pw-record`, `wpctl`); gain and mute work with plain ALSA. Recording needs `ffmpeg` (`sudo apt install ffmpeg`).
 
 ```bash
 cargo install --path crates/emeetctl-cli   # emeetctl
@@ -66,6 +67,9 @@ emeetctl image reset
 emeetctl mic list                  # USB microphones (camera = s600l, Yeti Nano = nano)
 emeetctl mic -d s600l gain 13      # microphone gain in dB; without -d, the system default input
 emeetctl mic level                 # live level meter (Ctrl+C to stop)
+emeetctl record                    # MP4 in ~/Videos until Ctrl+C (camera + default input)
+emeetctl record -f opus -m nano --seconds 60   # audio only, from the Yeti Nano, 1 minute
+emeetctl record -f webm -m nenhum -o demo.webm # video without sound
 emeetctl --json status             # machine-readable output
 ```
 
@@ -77,7 +81,7 @@ emeetctl --json status             # machine-readable output
 claude mcp add emeetctl -- emeetctl-mcp
 ```
 
-Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`, `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default`, `set_headphones`, `set_clean_mic` (mic tools take an optional `device`). Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
+Tools: `get_status`, `set_light_power`, `set_light_color`, `set_light_mode`, `set_light_brightness`, `list_image_controls`, `set_image_control`, `reset_image_controls`, `list_microphones`, `get_mic_status`, `set_mic_gain`, `set_mic_mute`, `set_mic_default`, `set_headphones`, `set_clean_mic`, `start_recording`, `stop_recording`, `get_recording` (mic tools take an optional `device`). Each call opens the device, acts and closes it, so the camera can be unplugged between calls.
 
 ## Protocol
 
@@ -112,7 +116,7 @@ Blue Yeti Nano (`b58e:0005`): only the standard USB audio controls are used (mic
 ## Layout
 
 ```
-crates/emeetctl-core   device discovery (sysfs), HID light protocol, V4L2 controls
+crates/emeetctl-core   device discovery (sysfs), HID light protocol, V4L2 controls, mics, recording
 crates/emeetctl-cli    `emeetctl`
 crates/emeetctl-gui    `emeetctl-gui` (egui)
 crates/emeetctl-mcp    `emeetctl-mcp` (MCP over stdio)

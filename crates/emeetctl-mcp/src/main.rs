@@ -1,9 +1,11 @@
 //! Servidor MCP por stdio (JSON-RPC 2.0, uma mensagem por linha).
 //! Cada chamada abre o dispositivo, age e fecha: a câmera pode ser desconectada entre chamadas.
 
+use emeetctl_core::record::{Audio, Options, Recorder};
 use emeetctl_core::{light, ControlKind, Light, Mic, Mode, Target, Video};
 use serde_json::{json, Value};
 use std::io::{BufRead, Write};
+use std::sync::Mutex;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
@@ -121,6 +123,29 @@ fn tools() -> Value {
             }
         },
         {
+            "name": "start_recording",
+            "description": "Começa a gravar num arquivo (ffmpeg). Formatos de vídeo (câmera + som): mp4 (padrão), mkv, webm. Só áudio: wav, flac, mp3, opus, m4a. Com a câmera virtual ligada, grava de uma saída livre dela sem tirar a câmera dos outros apps. Uma gravação por vez; pare com stop_recording.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "format": { "type": "string", "enum": ["mp4", "mkv", "webm", "wav", "flac", "mp3", "opus", "m4a"] },
+                    "mic": { "type": "string", "description": "De onde vem o som: 'padrao' (entrada padrão, o normal), 'limpo' (microfone limpo), 'nenhum' (vídeo mudo) ou um microfone de list_microphones (placa, s600l, nano...)." },
+                    "seconds": { "type": "integer", "minimum": 1, "description": "Para sozinha depois de N segundos." },
+                    "output": { "type": "string", "description": "Caminho do arquivo. Sem ele: pasta de vídeos ou de música do usuário, com data e hora no nome." }
+                }
+            }
+        },
+        {
+            "name": "stop_recording",
+            "description": "Para a gravação em andamento e devolve o arquivo (path) e o tamanho em bytes.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "get_recording",
+            "description": "Gravação em andamento: arquivo, formato, segundos gravados e fontes; recording=false se não houver.",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
             "name": "reset_image_controls",
             "description": "Volta todos os controles de imagem ao padrão de fábrica.",
             "inputSchema": { "type": "object", "properties": {} }
@@ -129,6 +154,14 @@ fn tools() -> Value {
 }
 
 type R = Result<Value, String>;
+
+/// A gravação vive enquanto o servidor estiver de pé, entre uma chamada e outra.
+static RECORDING: Mutex<Option<Recorder>> = Mutex::new(None);
+
+fn finished_json(path: std::path::PathBuf) -> Value {
+    let bytes = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    json!({ "recording": false, "path": path, "bytes": bytes })
+}
 
 fn light() -> Result<Light, String> {
     let p = emeetctl_core::find().map_err(|e| e.to_string())?;
@@ -274,6 +307,50 @@ fn call(name: &str, a: &Value) -> R {
             m.make_default().map_err(e)?;
             Ok(json!(m.status().map_err(e)?))
         }
+        "start_recording" => {
+            let mut rec = RECORDING.lock().unwrap();
+            if let Some(r) = rec.as_mut() {
+                if r.finished().is_none() {
+                    return Err(format!("já está gravando em {}", r.path().display()));
+                }
+            }
+            let format = a.get("format").and_then(Value::as_str).unwrap_or("mp4");
+            let mut o = Options::new(format.parse().map_err(e)?);
+            o.audio = Audio::parse(a.get("mic").and_then(Value::as_str)).map_err(e)?;
+            o.seconds = a.get("seconds").and_then(Value::as_u64).map(|s| s as u32);
+            o.output = a.get("output").and_then(Value::as_str).map(Into::into);
+            let r = Recorder::start(&o).map_err(e)?;
+            let mut st = json!(r.status());
+            st["recording"] = json!(true);
+            *rec = Some(r);
+            Ok(st)
+        }
+        "stop_recording" => {
+            let r = RECORDING
+                .lock()
+                .unwrap()
+                .take()
+                .ok_or("nenhuma gravação em andamento")?;
+            Ok(finished_json(r.stop().map_err(e)?))
+        }
+        "get_recording" => {
+            let mut rec = RECORDING.lock().unwrap();
+            let Some(r) = rec.as_mut() else {
+                return Ok(json!({ "recording": false }));
+            };
+            match r.finished() {
+                None => {
+                    let mut st = json!(r.status());
+                    st["recording"] = json!(true);
+                    Ok(st)
+                }
+                // terminou sozinha (fim do tempo ou erro)
+                Some(done) => {
+                    rec.take();
+                    Ok(finished_json(done.map_err(e)?))
+                }
+            }
+        }
         "reset_image_controls" => {
             Ok(json!({ "ok": true, "reset": video()?.reset_defaults().map_err(e)? }))
         }
@@ -295,7 +372,7 @@ fn handle(msg: &Value) -> Option<Value> {
                 "protocolVersion": version,
                 "capabilities": { "tools": {} },
                 "serverInfo": { "name": "emeetctl", "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Controla a webcam EMEET SmartCam S600L: luz (anel RGB e fill light), imagem (foco, zoom, exposição, balanço de branco) e microfones USB, o da câmera e outros como o Yeti Nano (ganho, mudo, fone, entrada padrão). Use get_status antes de mudar algo."
+                "instructions": "Controla a webcam EMEET SmartCam S600L: luz (anel RGB e fill light), imagem (foco, zoom, exposição, balanço de branco), microfones USB, o da câmera e outros como o Yeti Nano (ganho, mudo, fone, entrada padrão), e grava vídeo ou só áudio em arquivo. Use get_status antes de mudar algo."
             })
         }
         "ping" => json!({}),
