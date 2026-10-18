@@ -22,7 +22,8 @@ copyright = "2026, Nicholas Mazzei"
 license-file = ["../../LICENSE-MIT", "0"]
 extended-description = """\
 Linux control for the EMEET SmartCam S600L webcam: ring light (RGB and fill light), \
-image controls (focus, zoom, exposure, white balance) and live preview. \
+image controls (focus, zoom, exposure, white balance), live preview, USB microphones \
+and recording (video or audio only, through ffmpeg). \
 Ships the GUI (emeetctl-gui), the CLI (emeetctl), an MCP server (emeetctl-mcp) \
 and an optional virtual camera service that lets several apps use the webcam at once \
 (needs v4l2loopback-dkms). \
@@ -30,7 +31,7 @@ Not affiliated with EMEET."""
 section = "video"
 priority = "optional"
 depends = "$auto"
-recommends = "v4l2loopback-dkms"
+recommends = "v4l2loopback-dkms, ffmpeg"
 maintainer-scripts = "../../packaging/debian/"
 assets = [
     ["target/release/emeetctl-gui", "usr/bin/", "755"],
