@@ -59,6 +59,22 @@ enum Cmd {
         #[command(subcommand)]
         cmd: MicCmd,
     },
+    /// Grava vídeo (câmera + som) ou só áudio, conforme o formato (Ctrl+C para parar)
+    Record {
+        /// Vídeo: mp4, mkv, webm. Só áudio: wav, flac, mp3, opus, m4a
+        #[arg(short, long, default_value = "mp4")]
+        format: String,
+        /// De onde vem o som: padrao (entrada padrão), limpo, nenhum, ou um
+        /// microfone (placa, s600l, nano, vid:pid, trecho do nome)
+        #[arg(short, long)]
+        mic: Option<String>,
+        /// Para depois de N segundos
+        #[arg(long)]
+        seconds: Option<u32>,
+        /// Arquivo de saída (padrão: pasta de vídeos ou de música, com data e hora)
+        #[arg(short, long)]
+        output: Option<std::path::PathBuf>,
+    },
     /// Câmera virtual "emeetctl Camera": republica a S600L em várias saídas, uma por app (Ctrl+C para parar)
     Virtualcam {
         /// Quantas saídas criar ("emeetctl Camera", "emeetctl Camera 2", ...): cada
@@ -309,6 +325,12 @@ fn run(cli: Cli) -> R {
             })?;
         }
         Cmd::Mic { device, cmd } => mic(device.as_deref(), cmd, cli.json)?,
+        Cmd::Record {
+            format,
+            mic,
+            seconds,
+            output,
+        } => record(&format, mic.as_deref(), seconds, output, cli.json)?,
         Cmd::Image(ImageCmd::Reset) => {
             println!("{} controles no padrão", video()?.reset_defaults()?)
         }
@@ -427,6 +449,61 @@ fn clean(device: Option<&str>, estado: Clean, default: bool, json: bool) -> R {
         s.source.as_deref().unwrap_or("—"),
         if s.default { "sim" } else { "não" },
     );
+    Ok(())
+}
+
+/// Grava até o Ctrl+C (ou o fim de `seconds`), com o tempo correndo na mesma linha.
+fn record(
+    format: &str,
+    mic: Option<&str>,
+    seconds: Option<u32>,
+    output: Option<std::path::PathBuf>,
+    json: bool,
+) -> R {
+    use emeetctl_core::record::{Audio, Options, Recorder};
+    use std::io::Write;
+    let mut o = Options::new(format.parse()?);
+    o.audio = Audio::parse(mic)?;
+    o.seconds = seconds;
+    o.output = output;
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let s = stop.clone();
+    ctrlc_handler(move || s.store(true, std::sync::atomic::Ordering::Relaxed));
+    let mut rec = Recorder::start(&o)?;
+    let st = rec.status();
+    let sound = match &st.audio {
+        Audio::Default => "entrada padrão".to_string(),
+        Audio::Node(n) => n.clone(),
+        Audio::None => "sem som".to_string(),
+    };
+    match &st.video {
+        Some(v) => eprintln!("gravando vídeo de {v} + {sound}"),
+        None => eprintln!("gravando áudio de {sound}"),
+    }
+    eprintln!("arquivo: {}", st.path);
+    let path = loop {
+        if let Some(r) = rec.finished() {
+            break r?;
+        }
+        if stop.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!();
+            break rec.stop()?;
+        }
+        let t = rec.elapsed().as_secs();
+        eprint!("\r● {:02}:{:02}  (Ctrl+C para parar)\x1b[K", t / 60, t % 60);
+        std::io::stderr().flush()?;
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "path": path, "bytes": size, "format": o.format })
+        );
+    } else {
+        eprintln!();
+        println!("{} ({:.1} MB)", path.display(), size as f64 / 1e6);
+    }
     Ok(())
 }
 
