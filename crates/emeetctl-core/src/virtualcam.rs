@@ -106,6 +106,14 @@ pub fn service_active() -> bool {
         .is_ok_and(|s| s.success())
 }
 
+/// Para o serviço da câmera virtual. As saídas continuam existindo, sem imagem.
+pub fn stop_service() -> bool {
+    std::process::Command::new("systemctl")
+        .args(["--user", "stop", UNIT])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 /// Programas lendo a saída `output`, fora o próprio serviço (que fica com todas
 /// as saídas abertas para escrever nelas).
 pub fn readers(output: &Path) -> Vec<crate::CameraUser> {

@@ -1108,7 +1108,7 @@ impl App {
                 RichText::new(
                     "A câmera virtual lê a S600L uma vez e entrega a mesma imagem em várias saídas: \
                      \"emeetctl Camera\", \"emeetctl Camera 2\"... Cada app usa uma saída; a última fica \
-                     com esta prévia.",
+                     com esta prévia. Fechar o emeetctl desliga a câmera virtual.",
                 )
                 .color(MUTED),
             );
@@ -1367,9 +1367,14 @@ fn main() -> eframe::Result {
             ),
         ..Default::default()
     };
-    eframe::run_native(
+    let r = eframe::run_native(
         "emeetctl",
         options,
         Box::new(|cc| Ok(Box::new(App::new(cc)))),
-    )
+    );
+    // fechou a janela: a câmera virtual não fica rodando sem o app
+    if emeetctl_core::virtualcam::service_active() {
+        emeetctl_core::virtualcam::stop_service();
+    }
+    r
 }
