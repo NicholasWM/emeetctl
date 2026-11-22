@@ -6,7 +6,7 @@ mod worker;
 
 use eframe::egui::{self, Color32, RichText};
 use emeetctl_core::mic::{self, Meter};
-use emeetctl_core::record::{self, Audio, Format, Options, Recorder};
+use emeetctl_core::record::{self, Audio, Format, Options, PcOptions, Recorder};
 use emeetctl_core::{light, Control, ControlKind, Mode, Target};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -140,6 +140,9 @@ struct App {
     rec_audio_format: Format,
     /// Fonte do som, como em `emeetctl record --mic`: padrao, limpo, nenhum ou a placa.
     rec_audio: String,
+    /// Só áudio: grava também o som que sai do PC (chamada, vídeo), cada um na
+    /// sua trilha, como `emeetctl pc`.
+    rec_system: bool,
     rec_last: Option<PathBuf>,
     rec_error: Option<String>,
 }
@@ -184,6 +187,7 @@ impl App {
             rec_video_format: Format::Mp4,
             rec_audio_format: Format::Mp3,
             rec_audio: "padrao".into(),
+            rec_system: true,
             rec_last: None,
             rec_error: None,
         }
@@ -884,6 +888,8 @@ impl App {
     fn rec_format(&self) -> Format {
         if self.rec_video {
             self.rec_video_format
+        } else if self.rec_system {
+            Format::Mka
         } else {
             self.rec_audio_format
         }
@@ -907,9 +913,18 @@ impl App {
                 self.texture = None;
             }
         }
-        let started = Audio::parse(Some(&self.rec_audio)).and_then(|a| {
-            o.audio = a;
-            Recorder::start(&o)
+        let pc = !format.has_video() && self.rec_system;
+        let started = Audio::parse(Some(&self.rec_audio)).and_then(|a| match pc {
+            true => Recorder::start_pc(&PcOptions {
+                video: false,
+                system: true,
+                mic: a,
+                ..PcOptions::default()
+            }),
+            false => {
+                o.audio = a;
+                Recorder::start(&o)
+            }
         });
         match started {
             Ok(r) => {
@@ -959,6 +974,8 @@ impl App {
         }
         if self.rec_video {
             v.push(("Sem som".into(), "nenhum".into()));
+        } else if self.rec_system {
+            v.push(("Sem microfone (só o som do PC)".into(), "nenhum".into()));
         }
         v
     }
@@ -973,22 +990,36 @@ impl App {
                     Some(!self.rec_video as usize),
                 ) {
                     self.rec_video = i == 0;
-                    if !self.rec_video && self.rec_audio == "nenhum" {
+                    if !self.rec_video && !self.rec_system && self.rec_audio == "nenhum" {
                         self.rec_audio = "padrao".into();
                     }
                 }
                 ui.add_space(6.0);
-                let formats: &[Format] = if self.rec_video {
-                    &Format::VIDEO
-                } else {
-                    &Format::AUDIO
-                };
-                let names: Vec<&str> = formats.iter().map(|f| f.name()).collect();
-                let cur = self.rec_format();
-                if let Some(i) = segmented(ui, &names, formats.iter().position(|f| *f == cur)) {
-                    match self.rec_video {
-                        true => self.rec_video_format = formats[i],
-                        false => self.rec_audio_format = formats[i],
+                if !self.rec_video {
+                    let changed = ui
+                        .checkbox(
+                            &mut self.rec_system,
+                            "Gravar também o som do PC (chamada, vídeo)",
+                        )
+                        .changed();
+                    if changed && !self.rec_system && self.rec_audio == "nenhum" {
+                        self.rec_audio = "padrao".into();
+                    }
+                    ui.add_space(6.0);
+                }
+                if self.rec_video || !self.rec_system {
+                    let formats: &[Format] = if self.rec_video {
+                        &Format::VIDEO
+                    } else {
+                        &Format::AUDIO
+                    };
+                    let names: Vec<&str> = formats.iter().map(|f| f.name()).collect();
+                    let cur = self.rec_format();
+                    if let Some(i) = segmented(ui, &names, formats.iter().position(|f| *f == cur)) {
+                        match self.rec_video {
+                            true => self.rec_video_format = formats[i],
+                            false => self.rec_audio_format = formats[i],
+                        }
                     }
                 }
                 ui.label(RichText::new(self.rec_format().hint()).small().color(MUTED));
