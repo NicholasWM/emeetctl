@@ -111,6 +111,10 @@ pub fn transcribe(path: &Path, o: &Options) -> Result<Transcript> {
     let result = (|| -> Result<Vec<Segment>> {
         let mut all = Vec::new();
         for (i, name) in names.iter().enumerate() {
+            // a mistura repetiria as falas das trilhas separadas
+            if name == crate::record::TRACK_ALL && names.len() > 1 {
+                continue;
+            }
             let wav = tmp.join(format!("trilha{i}.wav"));
             extract(path, i, &wav)?;
             let json = run_whisper(&bin, &wav, &tmp, o)?;

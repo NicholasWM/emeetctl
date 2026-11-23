@@ -95,7 +95,9 @@ impl Format {
             Format::Mp3 => "compatível com tudo, ~190 kb/s",
             Format::Opus => "o melhor para voz, arquivo pequeno (128 kb/s)",
             Format::M4a => "AAC: o padrão de áudio do iPhone e do Mac",
-            Format::Mka => "Opus em trilhas separadas (sistema e microfone)",
+            Format::Mka => {
+                "Opus: tudo junto na trilha que o player toca, e cada fonte na sua trilha"
+            }
         }
     }
 
@@ -332,6 +334,9 @@ impl PcOptions {
 /// primeiro, depois o sistema. A transcrição usa esse nome para dizer quem falou.
 pub const TRACK_MIC: &str = "Microfone";
 pub const TRACK_SYSTEM: &str = "Sistema";
+/// Todas as fontes misturadas numa trilha só, a primeira do arquivo: é a que
+/// um player comum toca. A transcrição pula esta e usa as separadas.
+pub const TRACK_ALL: &str = "Tudo";
 
 /// A tela do X11 (`$DISPLAY`). No Wayland o x11grab só vê janelas do XWayland.
 pub fn screen() -> Result<String> {
@@ -514,11 +519,36 @@ fn pc_args(o: &PcOptions, screen: Option<&str>, h264: &str, path: &Path) -> Vec<
     if screen.is_some() {
         a.extend(["-map", "0:v"].map(String::from));
     }
+    // Com mais de uma fonte, a primeira trilha é a mistura de todas: o player
+    // toca a primeira e só ela, e assim quem ouve escuta tudo junto.
+    let mixed = tracks.len() > 1;
+    if mixed {
+        let inputs: String = (0..tracks.len())
+            .map(|i| format!("[{}:a]", first_audio + i))
+            .collect();
+        a.extend([
+            "-filter_complex".into(),
+            format!(
+                "{inputs}amix=inputs={}:duration=longest:normalize=0[tudo]",
+                tracks.len()
+            ),
+            "-map".into(),
+            "[tudo]".into(),
+        ]);
+    }
     for i in 0..tracks.len() {
         a.extend(["-map".into(), format!("{}:a", first_audio + i)]);
     }
-    for (i, (_, title)) in tracks.iter().enumerate() {
+    let titles = mixed
+        .then_some(TRACK_ALL)
+        .into_iter()
+        .chain(tracks.iter().map(|(_, t)| *t));
+    for (i, title) in titles.enumerate() {
         a.extend([format!("-metadata:s:a:{i}"), format!("title={title}")]);
+        if mixed {
+            let d = if i == 0 { "default" } else { "0" };
+            a.extend([format!("-disposition:a:{i}"), d.into()]);
+        }
     }
     if let Some(s) = o.seconds {
         a.extend(["-t".into(), s.to_string()]);
@@ -841,8 +871,10 @@ mod tests {
         assert!(!a.contains("x11grab"));
         assert!(a.contains("-stream_name Microfone -i default"));
         assert!(a.contains("-stream_name Sistema -i @DEFAULT_MONITOR@"));
-        assert!(a.contains("-map 0:a -map 1:a"));
-        assert!(a.contains("-metadata:s:a:0 title=Microfone -metadata:s:a:1 title=Sistema"));
+        assert!(a.contains("-filter_complex [0:a][1:a]amix=inputs=2:duration=longest:normalize=0[tudo] -map [tudo] -map 0:a -map 1:a"));
+        assert!(a.contains("-metadata:s:a:0 title=Tudo -disposition:a:0 default"));
+        assert!(a.contains("-metadata:s:a:1 title=Microfone -disposition:a:1 0"));
+        assert!(a.contains("-metadata:s:a:2 title=Sistema -disposition:a:2 0"));
         assert!(!a.contains("-c:v"));
         assert!(a.ends_with("-c:a libopus -b:a 96k /x.mka"));
     }
@@ -860,8 +892,9 @@ mod tests {
         assert!(a.contains("-stream_name Microfone · Yeti Nano -i yeti"));
         assert!(a.contains("-stream_name Microfone · S600L (câmera) -i s600l"));
         assert!(a.contains("-stream_name Sistema -i @DEFAULT_MONITOR@"));
-        assert!(a.contains("-map 0:a -map 1:a -map 2:a"));
-        assert!(a.contains("-metadata:s:a:2 title=Sistema"));
+        assert!(a.contains("amix=inputs=3"));
+        assert!(a.contains("-map [tudo] -map 0:a -map 1:a -map 2:a"));
+        assert!(a.contains("-metadata:s:a:3 title=Sistema"));
     }
 
     #[test]
