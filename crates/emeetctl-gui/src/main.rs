@@ -186,7 +186,8 @@ impl App {
             rec_video: true,
             rec_video_format: Format::Mp4,
             rec_audio_format: Format::Mp3,
-            rec_audio: "padrao".into(),
+            // todas as fontes: cada microfone e o som do PC
+            rec_audio: "todos".into(),
             rec_system: true,
             rec_last: None,
             rec_error: None,
