@@ -184,11 +184,14 @@ pub enum Audio {
     Node(String),
     /// Vídeo mudo.
     None,
+    /// Todos os microfones USB ao mesmo tempo, cada um na sua trilha:
+    /// `(node.name, título da trilha)`. Só na gravação do PC.
+    All(Vec<(String, String)>),
 }
 
 impl Audio {
-    /// Interpreta a escolha do usuário: `padrao`, `limpo`, `nenhum` ou um
-    /// microfone (placa, apelido, vid:pid ou trecho do nome).
+    /// Interpreta a escolha do usuário: `padrao`, `limpo`, `nenhum`, `todos` ou
+    /// um microfone (placa, apelido, vid:pid ou trecho do nome).
     pub fn parse(sel: Option<&str>) -> Result<Audio> {
         let Some(s) = sel.map(|s| s.trim().to_lowercase()) else {
             return Ok(Audio::Default);
@@ -196,6 +199,7 @@ impl Audio {
         match s.as_str() {
             "" | "padrao" | "padrão" | "default" => Ok(Audio::Default),
             "nenhum" | "none" | "sem" | "mudo" => Ok(Audio::None),
+            "todos" | "all" | "tudo" => Audio::every(),
             "limpo" | "clean" => {
                 if !clean::status().active {
                     return Err(Error::Invalid(
@@ -214,11 +218,37 @@ impl Audio {
         }
     }
 
+    /// Os microfones USB que aparecem no PipeWire, um por trilha.
+    fn every() -> Result<Audio> {
+        let pw = PipeWire::read()?;
+        let mics: Vec<(String, String)> = mic::list()
+            .into_iter()
+            .filter_map(|d| {
+                let (_, node) = pw.source_for_card(d.card)?;
+                Some((node, format!("{TRACK_MIC} · {}", d.short())))
+            })
+            .collect();
+        if mics.is_empty() {
+            return Err(Error::NotFound("microfone USB no PipeWire"));
+        }
+        Ok(Audio::All(mics))
+    }
+
+    /// As entradas do pulse, com o título de cada trilha.
+    fn sources(&self) -> Vec<(&str, &str)> {
+        match self {
+            Audio::Default => vec![("default", TRACK_MIC)],
+            Audio::Node(n) => vec![(n.as_str(), TRACK_MIC)],
+            Audio::None => vec![],
+            Audio::All(v) => v.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect(),
+        }
+    }
+
     fn pulse_name(&self) -> Option<&str> {
         match self {
             Audio::Default => Some("default"),
             Audio::Node(n) => Some(n),
-            Audio::None => None,
+            Audio::None | Audio::All(_) => None,
         }
     }
 }
@@ -458,10 +488,7 @@ fn pc_args(o: &PcOptions, screen: Option<&str>, h264: &str, path: &Path) -> Vec<
             display.into(),
         ]);
     }
-    let mut tracks = Vec::new();
-    if let Some(src) = o.mic.pulse_name() {
-        tracks.push((src, TRACK_MIC));
-    }
+    let mut tracks = o.mic.sources();
     if o.system {
         // o monitor da saída padrão: tudo o que o computador está tocando
         tracks.push(("@DEFAULT_MONITOR@", TRACK_SYSTEM));
@@ -531,6 +558,11 @@ impl Recorder {
     pub fn start(o: &Options) -> Result<Recorder> {
         if !o.format.has_video() && o.audio == Audio::None {
             return Err(Error::Invalid("gravar só áudio sem nenhum áudio?".into()));
+        }
+        if matches!(o.audio, Audio::All(_)) {
+            return Err(Error::Invalid(
+                "todos os microfones juntos só na gravação do PC (emeetctl pc -m todos)".into(),
+            ));
         }
         let video = match o.format.has_video() {
             true => Some(video_source(o.avoid.as_deref())?),
@@ -813,6 +845,30 @@ mod tests {
         assert!(a.contains("-metadata:s:a:0 title=Microfone -metadata:s:a:1 title=Sistema"));
         assert!(!a.contains("-c:v"));
         assert!(a.ends_with("-c:a libopus -b:a 96k /x.mka"));
+    }
+
+    #[test]
+    fn pc_with_every_microphone_gives_each_one_a_track() {
+        let o = PcOptions {
+            mic: Audio::All(vec![
+                ("yeti".into(), "Microfone · Yeti Nano".into()),
+                ("s600l".into(), "Microfone · S600L (câmera)".into()),
+            ]),
+            ..PcOptions::default()
+        };
+        let a = pc_args(&o, None, "h264_nvenc", Path::new("/x.mka")).join(" ");
+        assert!(a.contains("-stream_name Microfone · Yeti Nano -i yeti"));
+        assert!(a.contains("-stream_name Microfone · S600L (câmera) -i s600l"));
+        assert!(a.contains("-stream_name Sistema -i @DEFAULT_MONITOR@"));
+        assert!(a.contains("-map 0:a -map 1:a -map 2:a"));
+        assert!(a.contains("-metadata:s:a:2 title=Sistema"));
+    }
+
+    #[test]
+    fn every_microphone_is_refused_outside_the_pc_recording() {
+        let mut o = Options::new(Format::Mp3);
+        o.audio = Audio::All(vec![("yeti".into(), "Microfone · Yeti Nano".into())]);
+        assert!(Recorder::start(&o).is_err());
     }
 
     #[test]

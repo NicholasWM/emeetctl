@@ -143,7 +143,7 @@ fn tools() -> Value {
                 "properties": {
                     "video": { "type": "boolean", "description": "Grava também a tela. Padrão: false (só áudio)." },
                     "system": { "type": "boolean", "description": "Grava o som do sistema. Padrão: true." },
-                    "mic": { "type": "string", "description": "Microfone: 'padrao' (o normal), 'limpo', 'nenhum' (só o sistema) ou um microfone de list_microphones." },
+                    "mic": { "type": "string", "description": "Microfone: 'padrao' (o normal), 'limpo', 'nenhum' (só o sistema), 'todos' (cada microfone USB na sua trilha) ou um microfone de list_microphones." },
                     "fps": { "type": "integer", "minimum": 1, "maximum": 60, "description": "Quadros por segundo da tela. Padrão: 15." },
                     "seconds": { "type": "integer", "minimum": 1, "description": "Para sozinha depois de N segundos." },
                     "output": { "type": "string", "description": "Caminho do arquivo (.mka ou .mkv). Sem ele: pasta de música ou de vídeos, pc-<data e hora>." }

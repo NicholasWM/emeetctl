@@ -975,6 +975,10 @@ impl App {
         if self.rec_video {
             v.push(("Sem som".into(), "nenhum".into()));
         } else if self.rec_system {
+            v.push((
+                "Todos os microfones (cada um na sua trilha)".into(),
+                "todos".into(),
+            ));
             v.push(("Sem microfone (só o som do PC)".into(), "nenhum".into()));
         }
         v
@@ -990,6 +994,9 @@ impl App {
                     Some(!self.rec_video as usize),
                 ) {
                     self.rec_video = i == 0;
+                    if (self.rec_video || !self.rec_system) && self.rec_audio == "todos" {
+                        self.rec_audio = "padrao".into();
+                    }
                     if !self.rec_video && !self.rec_system && self.rec_audio == "nenhum" {
                         self.rec_audio = "padrao".into();
                     }
@@ -1002,7 +1009,10 @@ impl App {
                             "Gravar também o som do PC (chamada, vídeo)",
                         )
                         .changed();
-                    if changed && !self.rec_system && self.rec_audio == "nenhum" {
+                    if changed
+                        && !self.rec_system
+                        && matches!(self.rec_audio.as_str(), "nenhum" | "todos")
+                    {
                         self.rec_audio = "padrao".into();
                     }
                     ui.add_space(6.0);

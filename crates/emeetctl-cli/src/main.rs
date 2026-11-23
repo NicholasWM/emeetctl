@@ -81,8 +81,9 @@ enum Cmd {
         /// Grava também a tela inteira (X11) num MKV; sem isso, só áudio num MKA
         #[arg(long)]
         video: bool,
-        /// Microfone: padrao (entrada padrão), limpo, nenhum, ou um microfone
-        /// (placa, s600l, nano, vid:pid, trecho do nome)
+        /// Microfone: padrao (entrada padrão), limpo, nenhum, todos (cada
+        /// microfone USB na sua trilha), ou um microfone (placa, s600l, nano,
+        /// vid:pid, trecho do nome)
         #[arg(short, long)]
         mic: Option<String>,
         /// Não grava o som do sistema, só o microfone
@@ -553,7 +554,7 @@ fn record(
     let sound = match &st.audio {
         Audio::Default => "entrada padrão".to_string(),
         Audio::Node(n) => n.clone(),
-        Audio::None => "sem som".to_string(),
+        Audio::None | Audio::All(_) => "sem som".to_string(),
     };
     match &st.video {
         Some(v) => eprintln!("gravando vídeo de {v} + {sound}"),
@@ -612,6 +613,7 @@ fn pc(
     match &st.audio {
         Audio::Default => what.push("microfone (entrada padrão)".into()),
         Audio::Node(n) => what.push(format!("microfone {n}")),
+        Audio::All(v) => what.extend(v.iter().map(|(_, t)| t.clone())),
         Audio::None => {}
     }
     eprintln!("gravando {}", what.join(" + "));
